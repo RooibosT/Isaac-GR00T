@@ -129,9 +129,17 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
         camera_config = image_info["camera_config"]
         expected_image_keys = set(dataset.meta.camera_keys)
         from_idx = dataset.meta.episodes["dataset_from_index"][0]
-        step = dataset[from_idx]
-        init_arm_pose = step["observation.state"][:arm_dof].cpu().numpy()
-        task = step["task"]
+        # Read the initial pose / task from the parquet-backed table directly
+        # instead of dataset[from_idx]: __getitem__ would decode camera frames,
+        # which we neither need nor downloaded (download_videos=False).
+        row = dataset.hf_dataset[int(from_idx)]
+        init_arm_pose = (
+            torch.as_tensor(row["observation.state"], dtype=torch.float32)[:arm_dof]
+            .cpu()
+            .numpy()
+        )
+        tasks_df = dataset.meta.tasks
+        task = tasks_df.index[tasks_df["task_index"] == int(row["task_index"])][0]
 
         remote_policy_client = Gr00tSimPolicyClient(
             server_address=cfg.policy_server_address,
@@ -258,7 +266,11 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
 @parser.wrap()
 def eval_main(cfg: Gr00tEvalSimConfig):
     logging.info(pformat(asdict(cfg)))
-    dataset = LeRobotDataset(repo_id=cfg.repo_id, root=cfg.root or None)
+    # The client only needs meta/ (camera keys, episode index, task string) and
+    # the data/ parquet (initial arm pose) — skip the ~2GB videos/ download.
+    # The GR00T policy server needs no dataset at all (stats live in the
+    # checkpoint's processor/).
+    dataset = LeRobotDataset(repo_id=cfg.repo_id, root=cfg.root or None, download_videos=False)
     eval_remote_policy(cfg, dataset)
     logging.info("End of remote eval")
 

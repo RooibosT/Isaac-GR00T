@@ -87,6 +87,10 @@ python eval_g1_sim_groot.py \
 # 프롬프트에서 's' + Enter → 팔이 초기 자세로 이동 후 평가 시작
 ```
 
+최초 실행 시 데이터셋의 meta/ + data/ parquet(수백 MB)만 받습니다 — 초기 자세·task
+문자열·카메라 키 용도이며 videos/(~2GB)는 받지 않습니다. GR00T 서버 쪽은 dataset이
+아예 필요 없습니다(통계가 체크포인트에 내장).
+
 ### 변형 교체
 
 GPU 서버에서 Ctrl+C 후 `MODEL_PATH`만 바꿔 1번을 다시 실행하고,
