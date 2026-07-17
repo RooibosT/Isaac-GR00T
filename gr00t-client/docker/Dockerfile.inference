@@ -1,12 +1,10 @@
 # syntax=docker/dockerfile:1
 # Isaac-GR00T N1.7 inference-only server image.
 #
-# Designed for GPU hosts on older drivers (verified target: driver 535.216.01 /
-# CUDA 12.2): torch cu128 wheels bundle their own CUDA runtime and run on any
-# driver >= 525.60.13 via CUDA 12 minor-version compatibility, as long as the
-# GPU is Ampere or newer (sm80+ SASS is precompiled in the torch and flash-attn
-# wheels; flash-attn 2 does not support pre-Ampere GPUs at all). The 12.2 base
-# image keeps the container toolkit's driver requirement check happy on 535.
+# Host requirements: NVIDIA driver >= 570 (CUDA 12.8) and an Ampere-or-newer
+# GPU (sm80+; flash-attn 2 does not support pre-Ampere GPUs). Verified target:
+# RTX A5000 (sm86) on driver 580.x. The NVIDIA Container Toolkit must be
+# installed so --gpus all works.
 #
 # Build (from the repo root):
 #   docker build -f gr00t-client/docker/Dockerfile.inference -t gr00t-inference .
@@ -25,7 +23,7 @@
 #     -e MODEL_PATH=/checkpoints/model \
 #     gr00t-inference
 
-FROM nvidia/cuda:12.2.2-base-ubuntu22.04
+FROM nvidia/cuda:12.8.0-base-ubuntu22.04
 
 SHELL ["/bin/bash", "-c"]
 

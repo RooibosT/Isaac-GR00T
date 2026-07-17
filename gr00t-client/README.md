@@ -30,17 +30,19 @@ GR00T **N1.5** 정책만 로드할 수 있어서 (`"type": "groot"` config), N1.
 
 **드라이버/GPU 요구사항:**
 
-- **GPU: Ampere(sm80) 이상** (RTX 30/40, A100, H100 등) — flash-attn 2의 하드 요구사항
-- **드라이버: ≥ 525.60.13** — CUDA 12.8 공식 짝은 드라이버 570이지만, torch cu128
-  휠은 CUDA 런타임을 휠에 번들하고 CUDA 12.x minor version compatibility가 적용되어
-  드라이버 525 이상이면 동작합니다. **driver 535.216.01 (CUDA 12.2) 서버 OK.**
-  (전제: GPU가 sm80~90 — torch/flash-attn 휠에 프리컴파일 SASS가 있어 구드라이버의
-  PTX JIT 제약을 타지 않음)
+- **GPU: Ampere(sm80) 이상** (RTX 30/40, A5000, A100, H100 등) — flash-attn 2의
+  하드 요구사항. RTX A5000(sm86) 확인됨.
+- **드라이버: ≥ 570** (CUDA 12.8) — torch cu128 + flash-attn cu12/torch2.9 휠 기준.
+  (참고: 드라이버 업그레이드가 불가한 경우에도 CUDA 12 minor version compatibility로
+  드라이버 525.60.13 이상 + sm80~90 GPU면 동작함)
 
-### 방법 1 — Docker (권장)
+### 방법 1 — Docker (권장) — `serve_variant.sh` 불필요
 
-repo 루트에서 추론 전용 이미지 빌드 (base가 CUDA 12.2라 driver 535 호스트에서
-그대로 실행됨; NVIDIA Container Toolkit 필요):
+Docker 방식에서는 컨테이너의 entrypoint가 체크포인트 다운로드와 서버 실행을 모두
+처리하므로 `docker run` 한 번이면 됩니다. (`serve_variant.sh`는 방법 2의 venv 전용
+편의 스크립트 — 같은 일을 하는 대체재이며 Docker와 함께 쓰지 않습니다.)
+
+repo 루트에서 추론 전용 이미지 빌드 (NVIDIA Container Toolkit 필요):
 
 ```bash
 git clone https://github.com/RooibosT/Isaac-GR00T && cd Isaac-GR00T
