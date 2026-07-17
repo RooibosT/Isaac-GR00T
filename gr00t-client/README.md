@@ -28,25 +28,50 @@ GR00T **N1.5** 정책만 로드할 수 있어서 (`"type": "groot"` config), N1.
 
 ## 1. GPU 서버 셋업 (추론 서버)
 
-**요구사항:** NVIDIA 드라이버 **≥ 570** (Isaac-GR00T 표준 venv가 torch cu128 +
-flash-attn cu12/torch2.9 빌드라서). `nvidia-smi` 우상단 "CUDA Version"이 12.8
-이상이면 OK. 미달이면 flash-attn 없이 SDPA로 폴백하는 별도 torch 빌드 구성이
-필요합니다(권장하지 않음).
+**드라이버/GPU 요구사항:**
+
+- **GPU: Ampere(sm80) 이상** (RTX 30/40, A100, H100 등) — flash-attn 2의 하드 요구사항
+- **드라이버: ≥ 525.60.13** — CUDA 12.8 공식 짝은 드라이버 570이지만, torch cu128
+  휠은 CUDA 런타임을 휠에 번들하고 CUDA 12.x minor version compatibility가 적용되어
+  드라이버 525 이상이면 동작합니다. **driver 535.216.01 (CUDA 12.2) 서버 OK.**
+  (전제: GPU가 sm80~90 — torch/flash-attn 휠에 프리컴파일 SASS가 있어 구드라이버의
+  PTX JIT 제약을 타지 않음)
+
+### 방법 1 — Docker (권장)
+
+repo 루트에서 추론 전용 이미지 빌드 (base가 CUDA 12.2라 driver 535 호스트에서
+그대로 실행됨; NVIDIA Container Toolkit 필요):
 
 ```bash
-git clone https://github.com/NVIDIA/Isaac-GR00T && cd Isaac-GR00T
+git clone https://github.com/RooibosT/Isaac-GR00T && cd Isaac-GR00T
+docker build -f gr00t-client/docker/Dockerfile.inference -t gr00t-inference .
+```
+
+실행 — 컨테이너가 시작 시 GPU/flash-attn 커널 체크를 하고, Hub private repo에서
+체크포인트를 받아 서버를 띄웁니다:
+
+```bash
+docker run --rm -it --gpus all --ipc=host -p 5555:5555 \
+  -v $HOME/.cache/huggingface:/root/.cache/huggingface \
+  -v $HOME/gr00t_checkpoints:/checkpoints \
+  -e HF_TOKEN=<hf_token> \
+  -e MODEL_PATH=RooibosT/gr00t-n1.7-g1-dex1-A \
+  gr00t-inference
+# "Server is ready and listening" 출력까지 대기
+# 변형 교체: Ctrl+C 후 -e MODEL_PATH=...-B / ...-A40 / ...-B40 으로 재실행
+```
+
+로컬 체크포인트를 쓰려면 `-v /path/to/ckpt:/checkpoints/model:ro -e MODEL_PATH=/checkpoints/model`.
+
+### 방법 2 — venv 직접 (드라이버 ≥ 525, uv 사용 가능 환경)
+
+```bash
+git clone https://github.com/RooibosT/Isaac-GR00T && cd Isaac-GR00T
 # 주의: scripts/deployment/*/wheels/*.whl 이 git-lfs 파일 — git lfs install 필요
 uv sync                       # 학습 extras 불필요, 기본 sync면 충분
 source .venv/bin/activate
 hf auth login                 # private 체크포인트 repo 접근용 (RooibosT 계정)
-```
-
-서버 실행 (변형당 하나, 교체는 Ctrl+C 후 다른 변형으로 재실행). 이 디렉토리는
-Isaac-GR00T repo 안에 있으므로 clone만 하면 함께 따라옵니다:
-
-```bash
-bash gr00t-client/serve_variant.sh A 5555 0    # repo 루트에서
-# "Server is ready and listening" 출력까지 대기
+bash gr00t-client/serve_variant.sh A 5555 0
 ```
 
 | 변형 | 팔 표현 | horizon → 클라이언트 `--actions_per_chunk` |
@@ -59,7 +84,10 @@ bash gr00t-client/serve_variant.sh A 5555 0    # repo 루트에서
 서버 기동 후 같은 머신에서 왕복 검증 (변형 A/B는 `--horizon 16`, A40/B40은 40):
 
 ```bash
+# venv 방식:
 python gr00t-client/test_roundtrip.py --port 5555 --horizon 16
+# Docker 방식 (서버 컨테이너 안에서):
+docker exec -it <container> python gr00t-client/test_roundtrip.py --port 5555 --horizon 16
 # "ROUNDTRIP TEST PASSED" 확인
 ```
 
