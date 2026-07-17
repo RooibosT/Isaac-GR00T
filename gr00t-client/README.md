@@ -107,6 +107,33 @@ GPU 서버에서 Ctrl+C 후 `MODEL_PATH`만 바꿔 1번을 다시 실행하고,
 
 ---
 
+## 통신/제어 주기 검증
+
+**1단계 — 시뮬 없이 client↔server 파이프라인만** (데스크톱에서, 터널 경유로 실행해야
+실제 네트워크 지연이 포함됨):
+
+```bash
+python test_control_rate.py --server 127.0.0.1:5555 \
+  --actions_per_chunk 16 --frequency 30 --seconds 30
+```
+
+30초간 가짜 관측으로 실제 제어 루프와 동일한 비동기 파이프라인을 돌리고 판정을
+출력합니다: 달성 Hz(±2% 이내), **queue underruns = 0**(언더런 1회 = 실기에서 팔이
+한 틱 동안 마지막 명령 유지 = hitch), 추론 latency p95 vs 재충전 예산
+(`(1-threshold) × chunk/fps` — 기본 설정 기준 266ms).
+
+**2단계 — 실제 평가 중 상시 모니터링**: `eval_g1_sim_groot.py`가 5초마다 `[rate]`
+로그를 출력합니다:
+
+```
+[rate] loop 29.98 Hz (target 30) | tick busy p95 4.2 ms (budget 33.3, overruns 0)
+       | action misses 0 | queue 9 | infer p50/p95 180/220 ms | replan every 270 ms
+```
+
+- `loop Hz` ≈ 30, `overruns` 0 → 제어 루프가 teleop과 동일한 주기로 DDS에 액션 발행 중
+- `action misses` 0 → 매 틱 새 액션 실행 (0이 아니면 그 횟수만큼 hitch 발생)
+- `infer p95` < `replan every` → 큐가 마르기 전에 다음 청크가 도착하는 구조
+
 ## 트러블슈팅
 
 | 증상 | 원인/조치 |

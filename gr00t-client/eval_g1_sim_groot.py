@@ -137,9 +137,7 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
         # which we neither need nor downloaded (download_videos=False).
         row = dataset.hf_dataset[int(from_idx)]
         init_arm_pose = (
-            torch.as_tensor(row["observation.state"], dtype=torch.float32)[:arm_dof]
-            .cpu()
-            .numpy()
+            torch.as_tensor(row["observation.state"], dtype=torch.float32)[:arm_dof].cpu().numpy()
         )
         tasks_df = dataset.meta.tasks
         task = tasks_df.index[tasks_df["task_index"] == int(row["task_index"])][0]
@@ -161,6 +159,12 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
         idx = 0
         full_state = None
         reward_stats = {"reward_sum": 0.0, "episode_num": 0.0}
+        # Control-rate telemetry: logged every stats_window ticks (~5s @30Hz).
+        stats_window = max(1, int(cfg.frequency * 5))
+        tick_durations: list[float] = []
+        window_start = None
+        action_misses = 0
+        got_first_action = False
 
         if user_input.lower() != "s":
             return
@@ -219,7 +223,12 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
             action = remote_policy_client.pop_action()
             action_np = None
             if action is not None:
+                got_first_action = True
                 action_np = _execute_action(action, robot_interface, cfg)
+            elif got_first_action:
+                # After warm-up, a None action means the queue drained: the arm
+                # holds its last command for this tick (a visible hitch).
+                action_misses += 1
 
             if cfg.save_data and action is not None:
                 process_data_add(
@@ -247,6 +256,29 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
 
             idx += 1
             reward_stats["episode_num"] += 1
+
+            # Control-rate telemetry
+            if window_start is None:
+                window_start = loop_start_time
+            tick_durations.append(time.perf_counter() - loop_start_time)
+            if len(tick_durations) >= stats_window:
+                elapsed = time.perf_counter() - window_start
+                busy = np.array(tick_durations)
+                budget = 1.0 / cfg.frequency
+                snap = remote_policy_client.timing_snapshot()
+                logger_mp.info(
+                    f"[rate] loop {len(busy) / elapsed:.2f} Hz (target {cfg.frequency:.0f}) | "
+                    f"tick busy p95 {np.percentile(busy, 95) * 1e3:.1f} ms "
+                    f"(budget {budget * 1e3:.1f}, overruns {(busy > budget).sum()}) | "
+                    f"action misses {action_misses} | queue {snap.get('queue_size', 0):.0f} | "
+                    f"infer p50/p95 {snap.get('infer_ms_p50', float('nan')):.0f}/"
+                    f"{snap.get('infer_ms_p95', float('nan')):.0f} ms | "
+                    f"replan every {snap.get('replan_interval_ms_p50', float('nan')):.0f} ms"
+                )
+                tick_durations.clear()
+                action_misses = 0
+                window_start = None
+
             time.sleep(max(0, (1.0 / cfg.frequency) - (time.perf_counter() - loop_start_time)))
 
     except Exception:

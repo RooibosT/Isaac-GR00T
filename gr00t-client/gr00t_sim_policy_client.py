@@ -19,6 +19,7 @@ in modality-config key order into per-step (16,) tensors.
 """
 
 from dataclasses import dataclass
+from collections import deque
 import logging
 from queue import Queue
 import threading
@@ -87,6 +88,12 @@ class Gr00tSimPolicyClient:
         self.state_keys: list[str] = list(self.state_layout.keys())
         self.action_keys: list[str] = list(self.state_layout.keys())
         self.language_key: str = "annotation.human.task_description"
+
+        # Timing telemetry (see timing_snapshot()).
+        self._stats_lock = threading.Lock()
+        self._inference_latencies: deque[float] = deque(maxlen=500)
+        self._replan_intervals: deque[float] = deque(maxlen=500)
+        self._last_replan_time: float | None = None
 
     # ------------------------------------------------------------------ setup
 
@@ -209,7 +216,14 @@ class Gr00tSimPolicyClient:
             except Exception:
                 continue
             try:
+                t_start = time.perf_counter()
                 action = self.client.get_action(converted)
+                latency = time.perf_counter() - t_start
+                with self._stats_lock:
+                    self._inference_latencies.append(latency)
+                    if self._last_replan_time is not None:
+                        self._replan_intervals.append(t_start - self._last_replan_time)
+                    self._last_replan_time = t_start
                 chunk = self._chunk_from_response(action)
                 chunk = chunk[: self.action_chunk_size]
                 dt = self.environment_dt
@@ -241,3 +255,21 @@ class Gr00tSimPolicyClient:
             self.action_queue = Queue()
             for action in future_actions:
                 self.action_queue.put(action)
+
+    def timing_snapshot(self) -> dict[str, float]:
+        """Latency/cadence stats over the recent window (for rate diagnostics)."""
+        with self._stats_lock:
+            lat = np.array(self._inference_latencies, dtype=np.float64)
+            gap = np.array(self._replan_intervals, dtype=np.float64)
+        with self.action_queue_lock:
+            queue_size = self.action_queue.qsize()
+        snap = {"queue_size": float(queue_size), "replans": float(len(lat))}
+        if len(lat) > 0:
+            snap.update(
+                infer_ms_p50=float(np.percentile(lat, 50) * 1e3),
+                infer_ms_p95=float(np.percentile(lat, 95) * 1e3),
+                infer_ms_max=float(lat.max() * 1e3),
+            )
+        if len(gap) > 0:
+            snap["replan_interval_ms_p50"] = float(np.percentile(gap, 50) * 1e3)
+        return snap
