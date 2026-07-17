@@ -15,6 +15,8 @@ Run inside the ``unitree_lerobot`` conda env with this directory on PYTHONPATH:
 from dataclasses import asdict, dataclass, field
 import logging
 from multiprocessing.sharedctypes import SynchronizedArray
+import os
+from pathlib import Path
 from pprint import pformat
 import threading
 import time
@@ -26,6 +28,7 @@ from lerobot.utils.utils import init_logging
 import logging_mp
 import numpy as np
 import torch
+import unitree_lerobot
 from unitree_lerobot.eval_robot.make_robot import (
     process_images_and_observations,
     setup_image_client,
@@ -266,6 +269,13 @@ def eval_remote_policy(cfg: Gr00tEvalSimConfig, dataset: LeRobotDataset):
 @parser.wrap()
 def eval_main(cfg: Gr00tEvalSimConfig):
     logging.info(pformat(asdict(cfg)))
+    # unitree_lerobot resolves its URDF/mesh assets via CWD-relative paths
+    # ("unitree_lerobot/eval_robot/assets/..."), assuming the process runs from
+    # the repo dir that contains the package. Replicate that from anywhere.
+    # (__path__, not __file__: unitree_lerobot is a namespace package)
+    url_lerobot_root = Path(list(unitree_lerobot.__path__)[0]).resolve().parent
+    os.chdir(url_lerobot_root)
+    logging.info(f"Working directory set to {url_lerobot_root} (for URDF asset paths)")
     # The client only needs meta/ (camera keys, episode index, task string) and
     # the data/ parquet (initial arm pose) — skip the ~2GB videos/ download.
     # The GR00T policy server needs no dataset at all (stats live in the
