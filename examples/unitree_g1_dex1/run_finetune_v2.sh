@@ -19,6 +19,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 source .venv/bin/activate
 export HF_HOME=/NHNHOME/WORKSPACE/chan/.cache/huggingface
+# Everything (base model local, Cosmos backbone + tokenizer cached) resolves offline;
+# staying offline makes launches immune to HF 429 rate limits. Override with
+# HF_HUB_OFFLINE=0 if a cache miss ever needs a fresh download.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 
 VARIANT="${1:-a40}"
 case "$VARIANT" in

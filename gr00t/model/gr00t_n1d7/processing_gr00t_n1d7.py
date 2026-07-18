@@ -50,6 +50,19 @@ try:
 except ImportError:
     Qwen3VLProcessor = None
 
+# transformers' mistral-regex fixup calls the hub model_info API on every tokenizer
+# load — even with HF_HUB_OFFLINE=1 (raises OfflineModeIsEnabled) and it 429s under
+# rate limiting, killing training/inference startup. The N1.7 backbone tokenizer is
+# Qwen3, never mistral, so the fixup can never apply here; skip it entirely.
+try:
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+    PreTrainedTokenizerBase._patch_mistral_regex = classmethod(
+        lambda cls, tokenizer, *args, **kwargs: tokenizer
+    )
+except (ImportError, AttributeError):  # older transformers without the fixup
+    pass
+
 # Suppress protobuf deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
 
