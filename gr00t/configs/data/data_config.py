@@ -71,6 +71,10 @@ class DataConfig:
         default_factory=lambda: MODALITY_CONFIGS
     )
 
+    # Upper bound on preprocessed validation timesteps (split across datasets that
+    # set ``val_dataset_path``), evaluated periodically for eval_loss logging.
+    val_max_samples: int = 512
+
     # Sharded dataset configuration
     download_cache: bool = False
     shard_size: int = 2**10

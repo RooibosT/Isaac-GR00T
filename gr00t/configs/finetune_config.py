@@ -41,9 +41,25 @@ class FinetuneConfig:
 
     modality_config_path: str | None = None
     """
-    Path to a Python file defining the modality configuration for the given embodiment. 
-    If None, use the pre-registered modality config in `gr00t/configs/data/embodiment_configs.py`. 
+    Path to a Python file defining the modality configuration for the given embodiment.
+    If None, use the pre-registered modality config in `gr00t/configs/data/embodiment_configs.py`.
     """
+
+    val_dataset_path: str | None = None
+    """Path to a held-out validation dataset root. When set, a fixed subset of its
+    timesteps is preprocessed once (no augmentation, no state dropout) and evaluated
+    every ``eval_steps`` steps; ``eval_loss`` is logged to the terminal and wandb."""
+
+    eval_steps: int = 1000
+    """Frequency (in training steps) of validation-loss evaluation. Only used when
+    ``val_dataset_path`` is set."""
+
+    val_max_samples: int = 512
+    """Upper bound on the number of validation timesteps evaluated (spread evenly
+    across episodes). Only used when ``val_dataset_path`` is set."""
+
+    eval_batch_size: int = 8
+    """Per-device batch size for validation-loss evaluation."""
 
     # --- Model Tuning Flags ---
     tune_llm: bool = False

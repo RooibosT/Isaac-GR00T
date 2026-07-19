@@ -67,6 +67,7 @@ if __name__ == "__main__":
                         "dataset_paths": dataset_paths,
                         "mix_ratio": 1.0,
                         "embodiment_tag": embodiment_tag,
+                        "val_dataset_path": ft_config.val_dataset_path,
                     }
                 ],
             }
@@ -118,6 +119,12 @@ if __name__ == "__main__":
     config.training.warmup_ratio = ft_config.warmup_ratio
     config.training.wandb_project = ft_config.wandb_project
 
+    if ft_config.val_dataset_path is not None:
+        config.training.eval_strategy = "steps"
+        config.training.eval_steps = ft_config.eval_steps
+        config.training.eval_batch_size = ft_config.eval_batch_size
+
+    config.data.val_max_samples = ft_config.val_max_samples
     config.data.shard_size = ft_config.shard_size
     config.data.episode_sampling_rate = ft_config.episode_sampling_rate
     config.data.num_shards_per_epoch = ft_config.num_shards_per_epoch

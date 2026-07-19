@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1
+# Isaac-GR00T N1.7 inference-only server image.
+#
+# Host requirements: NVIDIA driver >= 570 (CUDA 12.8) and an Ampere-or-newer
+# GPU (sm80+; flash-attn 2 does not support pre-Ampere GPUs). Verified target:
+# RTX A5000 (sm86) on driver 580.x. The NVIDIA Container Toolkit must be
+# installed so --gpus all works.
+#
+# Build (from the repo root):
+#   docker build -f gr00t-client/docker/Dockerfile.inference -t gr00t-inference .
+#
+# Run (hub checkpoint, downloaded on first start into the mounted cache):
+#   docker run --rm -it --gpus all --ipc=host -p 5555:5555 \
+#     -v $HOME/.cache/huggingface:/root/.cache/huggingface \
+#     -v $HOME/gr00t_checkpoints:/checkpoints \
+#     -e HF_TOKEN=<token-with-access-to-the-private-repos> \
+#     -e MODEL_PATH=RooibosT/gr00t-n1.7-g1-dex1-A \
+#     gr00t-inference
+#
+# Run (local checkpoint dir):
+#   docker run --rm -it --gpus all --ipc=host -p 5555:5555 \
+#     -v /path/to/checkpoint:/checkpoints/model:ro \
+#     -e MODEL_PATH=/checkpoints/model \
+#     gr00t-inference
+
+FROM nvidia/cuda:12.8.0-base-ubuntu22.04
+
+SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    UV_PROJECT_ENVIRONMENT=/opt/gr00t-venv \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-pythons \
+    PATH=/opt/gr00t-venv/bin:/usr/local/bin:${PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/0.8.14/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
+WORKDIR /opt/gr00t
+
+# Dependency layer: lockfile-resolved, cached until pyproject/uv.lock change.
+# The aarch64 torchcodec wheel is referenced as a path source in pyproject, so
+# it must exist and be a real zip even on x86_64 (uv extracts metadata from all
+# path sources). A plain `git clone` without git-lfs leaves an LFS pointer
+# there — detect that and fetch the real wheel from the GitHub media endpoint,
+# verifying it against the sha256 recorded in the pointer.
+COPY pyproject.toml uv.lock ./
+COPY scripts/deployment/dgpu/wheels/ ./scripts/deployment/dgpu/wheels/
+RUN <<'EOF'
+set -euo pipefail
+for whl in scripts/deployment/dgpu/wheels/*.whl; do
+    if head -c 12 "$whl" | grep -q "^version http"; then
+        oid=$(grep -oP '(?<=oid sha256:)[0-9a-f]+' "$whl")
+        rel=${whl#./}
+        echo "Fetching LFS object for $rel"
+        curl -fsSL -o "$whl" \
+            "https://media.githubusercontent.com/media/NVIDIA/Isaac-GR00T/main/$rel"
+        echo "$oid  $whl" | sha256sum -c -
+    fi
+done
+UV_HTTP_TIMEOUT=300 uv sync --frozen --no-install-project --no-dev
+EOF
+
+# Project layer: only what the inference server imports.
+COPY gr00t/ ./gr00t/
+COPY README.md ./
+RUN UV_HTTP_TIMEOUT=300 uv sync --frozen --no-dev
+
+COPY gr00t-client/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Client + round-trip test, runnable inside the container:
+#   docker exec -it <container> python gr00t-client/test_roundtrip.py --horizon 16
+COPY gr00t-client/*.py ./gr00t-client/
+ENV PYTHONPATH=/opt/gr00t/gr00t-client
+
+EXPOSE 5555
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

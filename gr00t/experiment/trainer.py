@@ -247,6 +247,38 @@ class Gr00tTrainer(Trainer):
 
         return super().train(resume_from_checkpoint=latest_checkpoint, **kwargs)
 
+    def evaluate(self, *args: Any, **kwargs: Any):  # type: ignore[override]
+        """Evaluate under a fixed RNG so eval_loss is comparable across steps.
+
+        The flow-matching loss draws random noise/timesteps per sample; without
+        a fixed seed those draws differ at every evaluation and swamp the metric.
+        fork_rng restores the training RNG state afterwards.
+        """
+        devices = [self.args.device] if self.args.device.type == "cuda" else []
+        with torch.random.fork_rng(devices=devices):
+            torch.manual_seed(self.args.seed)
+            return super().evaluate(*args, **kwargs)
+
+    def prediction_step(
+        self,
+        model,
+        inputs,
+        prediction_loss_only: bool = True,
+        ignore_keys: Optional[list[str]] = None,
+    ):  # type: ignore[override]
+        """Loss-only eval step.
+
+        The collator nests every tensor under a single "inputs" key, so the stock
+        implementation's label detection (``label_names`` lookup on the top-level
+        dict) never finds a target and silently skips the loss. The model's forward
+        computes the flow-matching loss whenever the action tensor is present, so
+        delegate straight to ``compute_loss``.
+        """
+        inputs = self._prepare_inputs(inputs)
+        with torch.no_grad():
+            loss = self.compute_loss(model, inputs)
+        return (loss.detach(), None, None)
+
     # ------------------------------------------------------------------
     # Loss / accuracy computation override
     # ------------------------------------------------------------------
@@ -280,8 +312,9 @@ class Gr00tTrainer(Trainer):
         # torch.save(input_embeddings, f"input_embeddings_{self.state.global_step}.pt")
         # torch.save(output_embeddings, f"output_embeddings_{self.state.global_step}.pt")
 
-        # Record last loss for testing purposes.
-        self.loss = loss
+        # Record last training loss for testing purposes (eval must not clobber it).
+        if model.training:
+            self.loss = loss
 
         # --------------------------------------------------------------
         # Accuracy calculation
