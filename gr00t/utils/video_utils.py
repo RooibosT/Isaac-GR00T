@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import math
+import os
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -64,6 +65,12 @@ def _get_video_decoder_cls():
 def _build_decoder(video_path: str, decoder_kwargs: Optional[dict]):
     video_decoder_cls = _get_video_decoder_cls()
     kwargs = {**_DEFAULT_DECODER_KWARGS, **(decoder_kwargs or {})}
+    # Optional override of ffmpeg decode-thread count (default 0 = ffmpeg auto/multi).
+    # Capping to 1-2 limits CPU oversubscription when many workers decode at once during
+    # a synchronized shard-caching burst. Set via env for throughput probes.
+    _ff_threads = os.environ.get("DATALOADER_FFMPEG_THREADS")
+    if _ff_threads is not None:
+        kwargs["num_ffmpeg_threads"] = int(_ff_threads)
     return video_decoder_cls(video_path, **kwargs)
 
 

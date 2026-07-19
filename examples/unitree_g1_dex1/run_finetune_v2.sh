@@ -43,14 +43,14 @@ EXP_NAME="g1_dex1_v2_${VARIANT}_b256${EXP_SUFFIX:-}"
 OUTPUT_DIR="/NHNHOME/WORKSPACE/chan/outputs/${EXP_NAME}"
 WANDB_PROJECT_NAME=gr00t-n1.7-g1-dex1
 
-# Effective batch 256. Default shape = micro-batch 16/GPU x accum 8. Measured facts
-# (production threads, OMP=2): dataloader raw capacity ~190 samples/s/rank >> observed
-# ~46/rank, GPU util ~40% -> neither decode/processor nor compute saturates. The real
-# ceiling is the shard-caching BURST STALL: a worker decodes a whole 1024-sample shard
-# (~86s, 76% decode) while serving the current one in ~20s -> ~66s stall, round-robin
-# blocks. Levers: SHARD_SIZE down (shorter/smoother bursts, free), pre-decode RAM cache
-# (removes 76% of the burst -> big win). Once the stall is gone the run becomes
-# compute-bound -> then GLOBAL_BATCH_SIZE=128 GRAD_ACCUM=1 is faster (fewer accum steps).
+# Effective batch 256. Default shape = micro-batch 16/GPU x accum 8.
+# THROUGHPUT FIX (2026-07-19, see RETRAIN_NOTES.md §6-9): the 30fps dataloader stall was
+# NOT decode volume or data buffering -- it was ffmpeg thread OVERSUBSCRIPTION.
+# num_ffmpeg_threads=0 (auto = ~one thread per core) x 32 workers floods the 72 cores and
+# starves the main process's CUDA kernel launches, so the GPU idles during caching bursts.
+# Capping DATALOADER_FFMPEG_THREADS=1 (below) fixed it: h16 3.32 -> 1.50 s/it, near the
+# compute floor, oscillation gone. prefetch_factor / SHARD_SIZE / RAM-cache: measured no
+# effect (buffering was never the bottleneck).
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-32}"    # per-device = this / NUM_GPUS
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
 MAX_STEPS="${MAX_STEPS:-13000}"
@@ -58,16 +58,9 @@ SAVE_STEPS="${SAVE_STEPS:-1000}"
 NUM_WORKERS="${DATALOADER_NUM_WORKERS:-16}"
 EP_SAMPLING_RATE="${EPISODE_SAMPLING_RATE:-0.2}"
 SHARD="${SHARD_SIZE:-1024}"                      # smaller = shorter caching bursts
+FFMPEG_THREADS="${DATALOADER_FFMPEG_THREADS:-1}" # 1 = no ffmpeg CPU oversubscription (§6-9); THE speed fix
 
-# Refuse to start while another training run is still using the GPUs.
-if [ "${FORCE:-0}" != "1" ]; then
-    BUSY=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l)
-    if [ "$BUSY" -gt 0 ]; then
-        echo "GPUs are busy ($BUSY compute process(es) running)." >&2
-        echo "Wait for the current run to finish, or re-run with FORCE=1." >&2
-        exit 1
-    fi
-fi
+# No GPU-busy guard by request: single operator checks `nvidia-smi` before launching.
 
 # Train/val split must exist (created by split_train_val.py, val held out for eval).
 if [ ! -d "$TRAIN_DATASET" ]; then
@@ -107,6 +100,7 @@ env \
     NUM_GPUS=2 USE_WANDB=1 GLOBAL_BATCH_SIZE="$GLOBAL_BATCH_SIZE" \
     DATALOADER_NUM_WORKERS="$NUM_WORKERS" EPISODE_SAMPLING_RATE="$EP_SAMPLING_RATE" \
     SHARD_SIZE="$SHARD" MAX_STEPS="$MAX_STEPS" SAVE_STEPS="$SAVE_STEPS" \
+    DATALOADER_FFMPEG_THREADS="$FFMPEG_THREADS" \
     bash examples/finetune.sh \
     --base-model-path "$BASE_MODEL_PATH" \
     --dataset-path "$TRAIN_DATASET" \
