@@ -23,26 +23,30 @@ import shutil
 import pandas as pd
 
 
-def build_split(src: str, split: str, old_ids: list[int], episodes: dict, cams: list[str]) -> None:
+def build_split(
+    src: str, split: str, old_ids: list[int], episodes: dict, cams: list[str], chunk_size: int
+) -> None:
     dst = f"{src}_{split}"
-    os.makedirs(f"{dst}/data/chunk-000", exist_ok=True)
     os.makedirs(f"{dst}/meta", exist_ok=True)
-    for cam in cams:
-        os.makedirs(f"{dst}/videos/chunk-000/observation.images.{cam}", exist_ok=True)
 
     records = []
     global_idx = 0
     for new_idx, old_idx in enumerate(old_ids):
-        df = pd.read_parquet(f"{src}/data/chunk-000/episode_{old_idx:06d}.parquet")
+        old_chunk = f"chunk-{old_idx // chunk_size:03d}"
+        new_chunk = f"chunk-{new_idx // chunk_size:03d}"
+        os.makedirs(f"{dst}/data/{new_chunk}", exist_ok=True)
+        df = pd.read_parquet(f"{src}/data/{old_chunk}/episode_{old_idx:06d}.parquet")
         n = len(df)
         df["episode_index"] = new_idx
         df["index"] = range(global_idx, global_idx + n)
         global_idx += n
-        df.to_parquet(f"{dst}/data/chunk-000/episode_{new_idx:06d}.parquet")
+        df.to_parquet(f"{dst}/data/{new_chunk}/episode_{new_idx:06d}.parquet")
 
         for cam in cams:
-            vsrc = f"{src}/videos/chunk-000/observation.images.{cam}/episode_{old_idx:06d}.mp4"
-            vdst = f"{dst}/videos/chunk-000/observation.images.{cam}/episode_{new_idx:06d}.mp4"
+            vdir = f"{dst}/videos/{new_chunk}/observation.images.{cam}"
+            os.makedirs(vdir, exist_ok=True)
+            vsrc = f"{src}/videos/{old_chunk}/observation.images.{cam}/episode_{old_idx:06d}.mp4"
+            vdst = f"{vdir}/episode_{new_idx:06d}.mp4"
             if os.path.exists(vdst):
                 os.remove(vdst)
             try:
@@ -50,9 +54,7 @@ def build_split(src: str, split: str, old_ids: list[int], episodes: dict, cams: 
             except OSError:
                 shutil.copy(vsrc, vdst)
 
-        records.append(
-            {"episode_index": new_idx, "tasks": episodes[old_idx]["tasks"], "length": n}
-        )
+        records.append({"episode_index": new_idx, "tasks": episodes[old_idx]["tasks"], "length": n})
 
     with open(f"{dst}/meta/episodes.jsonl", "w") as f:
         for rec in records:
@@ -93,8 +95,9 @@ def main() -> None:
     train_ids = [i for i in ids if i not in val_ids]
     print(f"train={len(train_ids)} val={len(val_ids)}")
 
-    build_split(src, "train", train_ids, episodes, cams)
-    build_split(src, "val", sorted(val_ids), episodes, cams)
+    chunk_size = info.get("chunks_size", 1000)
+    build_split(src, "train", train_ids, episodes, cams, chunk_size)
+    build_split(src, "val", sorted(val_ids), episodes, cams, chunk_size)
     print("SPLIT DONE")
 
 
