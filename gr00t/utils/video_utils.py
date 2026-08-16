@@ -71,6 +71,13 @@ def _build_decoder(video_path: str, decoder_kwargs: Optional[dict]):
     _ff_threads = os.environ.get("DATALOADER_FFMPEG_THREADS")
     if _ff_threads is not None:
         kwargs["num_ffmpeg_threads"] = int(_ff_threads)
+    # Optional seek-mode override ("exact" | "approximate"). torchcodec's default
+    # "exact" scans the whole file on every decoder open; "approximate" skips the
+    # scan and is bit-identical on constant-fps GOP-2 episode videos while being
+    # ~10x faster per fetch, which matters because a new decoder is built per fetch.
+    _seek_mode = os.environ.get("DATALOADER_SEEK_MODE")
+    if _seek_mode is not None:
+        kwargs["seek_mode"] = _seek_mode
     return video_decoder_cls(video_path, **kwargs)
 
 
