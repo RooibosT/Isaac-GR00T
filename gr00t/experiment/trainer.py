@@ -164,7 +164,28 @@ class Gr00tTrainer(Trainer):
         """
         self.action_offset = kwargs.pop("action_offset", None)
         self.multiprocessing_context = kwargs.pop("multiprocessing_context", "fork")
+        self.ddp_comm_bf16 = kwargs.pop("ddp_comm_bf16", False)
         super().__init__(*args, **kwargs)
+
+    def _wrap_model(self, model, training=True, dataloader=None):
+        """Optionally switch DDP gradient allreduce to bf16.
+
+        The parent sets ``self.accelerator.ddp_handler``; accelerate consumes it
+        when it wraps the model in DDP (``ddp_handler.register_comm_hook``), so
+        mutating the handler's comm_hook here is enough. Halves per-step DDP
+        traffic, matching the DeepSpeed recipe's "communication_data_type": "bf16".
+        """
+        model = super()._wrap_model(model, training=training, dataloader=dataloader)
+        if (
+            self.ddp_comm_bf16
+            and training
+            and getattr(self.accelerator, "ddp_handler", None) is not None
+        ):
+            from accelerate.utils import DDPCommunicationHookType
+
+            self.accelerator.ddp_handler.comm_hook = DDPCommunicationHookType.BF16
+            print("DDP gradient communication: bf16 compress hook enabled")
+        return model
 
     def log(self, logs: dict[str, float], start_time: Optional[float] = None) -> None:
         # Hide epoch from logged metrics as it's misleading for Iterable datasets.

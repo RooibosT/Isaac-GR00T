@@ -169,6 +169,19 @@ class FinetuneConfig:
     num_gpus: int = 1
     """Number of GPUs available for distributed or single-node training."""
 
+    use_ddp: bool = False
+    """Use plain PyTorch DDP instead of DeepSpeed ZeRO-2 for multi-GPU training.
+    DDP halves per-step communication (grad allreduce only, overlapped with
+    backward; ZeRO-2 adds a param allgather) at the cost of unsharded optimizer
+    state. Prefer it on hosts without NVLink, where inter-GPU traffic rides
+    slow PCIe/NUMA (`SYS`) paths and ZeRO-2 collectives dominate step time."""
+
+    ddp_comm_bf16: bool = False
+    """With use_ddp, allreduce gradients in bf16 instead of fp32 — halves DDP
+    traffic per step. Numerically this matches the validated DeepSpeed recipe
+    (zero2_config.json sets "communication_data_type": "bf16"); fp32 master
+    weights and optimizer state are unaffected. No effect without use_ddp."""
+
     use_wandb: bool = False
     """
     If True, log metrics and artifacts to Weights & Biases (wandb).
