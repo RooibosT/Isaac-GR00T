@@ -72,6 +72,39 @@ case "$VARIANT" in
         MODALITY_JSON=$EXAMPLE_DIR/modality_ee.json
         DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_ee
         ;;
+    joint_30hz_relarm_3view_clean)
+        # 3-view arm of the view-count ablation (pairs with *_4view_clean at an
+        # identical schedule; the earlier 3-vs-4 read was schedule-confounded).
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_4view_clean)
+        # Same config as joint_30hz_relarm_4view but on the stall-filtered,
+        # re-balanced dataset (teleop pauses removed; see EXPERIMENTS.md).
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_4view_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_3view_aug)
+        # Round 2: the 46-dim state on top of the round-1 winner (3 views).
+        # Pairs with joint_30hz_relarm_3view_clean at an identical schedule and
+        # on the same episode split, so the only difference is the state vector.
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_3view_aug_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint_aug.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_aug_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_4view_aug)
+        # Adds the 46-dim augmented state (projected gravity + FK wrist poses)
+        # on top of the cleaned data. Root x/y/z stay out of the state.
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_4view_aug_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint_aug.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_aug_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
     joint_30hz_relarm_4view)
         # RELATIVE arms + 4 views (adds cam_head_right). Long schedule: select by
         # open-loop scan, not eval_loss (EXPERIMENTS.md).
@@ -89,7 +122,7 @@ case "$VARIANT" in
         DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz
         DEFAULT_MAX_STEPS=50000
         ;;
-    *)  echo "variant must be joint|joint_h16|joint_wbc|joint_30hz|joint_30hz_relarm|joint_30hz_relarm_4view|ee" >&2; exit 1 ;;
+    *)  echo "variant must be joint|joint_h16|joint_wbc|joint_30hz|joint_30hz_relarm|joint_30hz_relarm_4view|joint_30hz_relarm_3view_clean|joint_30hz_relarm_4view_clean|joint_30hz_relarm_3view_aug|joint_30hz_relarm_4view_aug|ee" >&2; exit 1 ;;
 esac
 DEFAULT_MAX_STEPS="${DEFAULT_MAX_STEPS:-25000}"
 
