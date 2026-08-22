@@ -79,6 +79,15 @@ class FinetuneConfig:
     Dropout probability applied to state inputs for regularization during training.
     """
 
+    state_dropout_keys: tuple[str, ...] = ()
+    """State modality keys to drop independently of one another, in addition to
+    ``state_dropout_prob``'s whole-vector dropout. Use when one block needs to be
+    made unreliable on its own -- e.g. joint velocities, which let the model
+    extrapolate the near future instead of reading it off the images."""
+
+    state_dropout_key_prob: float = 0.0
+    """Probability that each key in ``state_dropout_keys`` is zeroed, per example."""
+
     # --- Data Augmentation ---
     random_rotation_angle: int | None = None
     """Maximum rotation angle (in degrees) for random rotation augmentation of input images."""
