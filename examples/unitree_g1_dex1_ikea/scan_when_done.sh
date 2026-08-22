@@ -14,12 +14,16 @@ set -uo pipefail
 
 EXP="$1"; CONFIG="$2"; GPU_A="$3"; GPU_B="$4"
 
-# GPU 7 is reserved for the user's own work on this host — never schedule onto it.
+# GPUs the operator has claimed for their own work; scans refuse to schedule onto
+# them. GPU 7 was reserved for a stretch and is not any more, so this is empty by
+# default — set RESERVED_GPUS="7" (space separated) to bring the guard back.
 for g in "$GPU_A" "$GPU_B"; do
-    if [ "$g" = "7" ]; then
-        echo "refusing to use GPU 7 (reserved); pick another" >&2
-        exit 1
-    fi
+    for r in ${RESERVED_GPUS:-}; do
+        if [ "$g" = "$r" ]; then
+            echo "refusing to use GPU $g (reserved); pick another" >&2
+            exit 1
+        fi
+    done
 done
 ROOT="/home/chan/IKEA/Isaac-GR00T"
 # HF Trainer nests the run under a second copy of the experiment name.
