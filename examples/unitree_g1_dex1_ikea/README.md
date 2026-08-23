@@ -16,6 +16,8 @@ Measurements, rejected ablations and the reasoning behind every setting are in
 | `g1_dex1_ikea_relarm_3view_aug_config.py` | **the main config** — 46-dim state, 16-dim action |
 | `g1_dex1_ikea_waistact_config.py` | 19-dim variant (waist prepended); use with the `_wa_*` datasets |
 | `g1_dex1_ikea_relarm_3view_torsograv_config.py` | rejected ablation, kept for the record |
+| `g1_dex1_ikea_armvel_config.py` | **adopted** — adds arm joint velocities (state → 60); velocities sit mid-list |
+| `g1_dex1_ikea_armvel_bctalign_config.py` | same 60 dims with the velocities appended, so columns 0-45 still match a BCT checkpoint |
 | `run_finetune_ikea.sh` | training launcher |
 | `scan_ikea.py` | open-loop checkpoint scan — **this is what selects the model**, not `eval_loss` |
 | `scan_when_done.sh` | wait for a run to exit, then scan it on two GPUs |
@@ -116,7 +118,14 @@ bash examples/unitree_g1_dex1_ikea/scan_when_done.sh <exp_name> <config.py> 0 1
 
 Reports MSE, arm MAE, wrist-position error via FK, and the first-5/8/16-step
 figures, split per task. Read the **8-step** numbers — that is what deployment
-executes before re-inferring.
+executes before re-inferring. Judging on the whole 40-step chunk understates a
+change that helps early: async deployment executes ~8 steps after latency
+compensation and spends the rest on RTC overlap, so steps past ~16 never run.
+
+`--zero-state-keys <keys>` zeroes those keys after normalization — the same thing
+`--state-dropout-keys` does in training. Scanning a run with and without it
+measures how much that run actually leans on those inputs, which an A/B between
+two runs cannot separate from a general accuracy difference.
 
 Two traps: a 19-dim run must be scanned against the `_wa_val` split (`VAL=` for
 the waiter), and MSE is not comparable across different action widths — the
