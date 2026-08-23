@@ -177,9 +177,31 @@ def main():
     # list across two GPUs halves that. Each shard writes its own --output, so
     # merge them afterwards.
     ap.add_argument("--steps", default="", help="comma-separated checkpoint steps; default all")
+    # Zeroes the named state keys *after* normalization, i.e. feeds the dataset
+    # mean — exactly what --state-dropout-keys does during training. Scoring a
+    # run with and without this measures how much it actually leans on those
+    # inputs, which a plain A/B between two runs cannot separate from a general
+    # accuracy difference.
+    ap.add_argument("--zero-state-keys", nargs="*", default=[])
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+
+    if args.zero_state_keys:
+        from gr00t.data.state_action.state_action_processor import StateActionProcessor
+
+        _apply_state = StateActionProcessor.apply_state
+        zero = set(args.zero_state_keys)
+
+        def apply_state_zeroed(self, *a, **kw):
+            out = _apply_state(self, *a, **kw)
+            for k in zero:
+                if k in out:
+                    out[k] = np.zeros_like(out[k])
+            return out
+
+        StateActionProcessor.apply_state = apply_state_zeroed
+        logging.info("zeroing normalized state keys: %s", sorted(zero))
     sys.path.insert(0, str(args.config.parent))
     importlib.import_module(args.config.stem)
 
