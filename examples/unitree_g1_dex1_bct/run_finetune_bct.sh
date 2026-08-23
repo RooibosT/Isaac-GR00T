@@ -28,42 +28,109 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 source .venv/bin/activate
-export HF_HOME=/NHNHOME/WORKSPACE/chan/.cache/huggingface
-# Base model + Cosmos backbone/tokenizer all resolve from local cache; offline mode
-# keeps launches immune to HF 429s. Override with HF_HUB_OFFLINE=0 on cache miss.
-export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+# torchcodec needs FFmpeg<8 shared libs; this host has no system FFmpeg, so they
+# come from a user-space conda-forge env (no sudo needed).
+if [ -d "$HOME/micromamba/envs/ffmpeg7/lib" ]; then
+    export LD_LIBRARY_PATH="$HOME/micromamba/envs/ffmpeg7/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+# Offline mode keeps launches immune to HF 429s once the Cosmos backbone/tokenizer
+# are cached; first run on a fresh machine must be online (HF_HUB_OFFLINE=0).
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
 
 VARIANT="${1:-joint}"
+shift $(( $# > 0 ? 1 : 0 ))
+EXTRA_ARGS=("$@")   # forwarded verbatim to launch_finetune (e.g. --use-ddp)
 EXAMPLE_DIR=examples/unitree_g1_dex1_bct
 case "$VARIANT" in
     joint)
         CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_config.py
         MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
-        DATASET_ROOT=/NHNHOME/WORKSPACE/chan/.cache/lerobot/BitRobot/G1_Dex1_BCT_subtask_joint
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint
         ;;
     joint_h16)
         CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_h16_config.py
         MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
-        DATASET_ROOT=/NHNHOME/WORKSPACE/chan/.cache/lerobot/BitRobot/G1_Dex1_BCT_subtask_joint
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint
         ;;
     joint_wbc)
         CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_wbc_config.py
         MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
-        DATASET_ROOT=/NHNHOME/WORKSPACE/chan/.cache/lerobot/BitRobot/G1_Dex1_BCT_subtask_joint
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint
+        ;;
+    joint_30hz)
+        # 30 fps re-export (fps_divisor=1): same 31-dim layout and modality map as
+        # `joint`, so the config is shared. Horizon 40 now spans 1.33 s (was 2.67 s).
+        # ~465k effective horizon-40 train samples -> ~1815 steps/epoch at eff. 256;
+        # default 50k steps ~= 27 epochs (the 15 fps recipe's 25k ~= 31 epochs).
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz
+        DEFAULT_MAX_STEPS=50000
         ;;
     ee)
         CONFIG=$EXAMPLE_DIR/g1_dex1_bct_ee_config.py
         MODALITY_JSON=$EXAMPLE_DIR/modality_ee.json
-        DATASET_ROOT=/NHNHOME/WORKSPACE/chan/.cache/lerobot/BitRobot/G1_Dex1_BCT_subtask_ee
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_ee
         ;;
-    *)  echo "variant must be joint|joint_h16|joint_wbc|ee" >&2; exit 1 ;;
+    joint_30hz_relarm_3view_clean)
+        # 3-view arm of the view-count ablation (pairs with *_4view_clean at an
+        # identical schedule; the earlier 3-vs-4 read was schedule-confounded).
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_4view_clean)
+        # Same config as joint_30hz_relarm_4view but on the stall-filtered,
+        # re-balanced dataset (teleop pauses removed; see EXPERIMENTS.md).
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_4view_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_3view_aug)
+        # Round 2: the 46-dim state on top of the round-1 winner (3 views).
+        # Pairs with joint_30hz_relarm_3view_clean at an identical schedule and
+        # on the same episode split, so the only difference is the state vector.
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_3view_aug_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint_aug.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_aug_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_4view_aug)
+        # Adds the 46-dim augmented state (projected gravity + FK wrist poses)
+        # on top of the cleaned data. Root x/y/z stay out of the state.
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_4view_aug_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint_aug.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz_aug_clean
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm_4view)
+        # RELATIVE arms + 4 views (adds cam_head_right). Long schedule: select by
+        # open-loop scan, not eval_loss (EXPERIMENTS.md).
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_4view_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz
+        DEFAULT_MAX_STEPS=30000
+        ;;
+    joint_30hz_relarm)
+        # RELATIVE arms + ABSOLUTE waist/grippers on the 30 fps dataset — the
+        # field-validated brainco split (CK-Sung: REL arms deployed well on real G1).
+        # Same dataset/schedule as joint_30hz for a clean action-rep A/B.
+        CONFIG=$EXAMPLE_DIR/g1_dex1_bct_joint_relarm_config.py
+        MODALITY_JSON=$EXAMPLE_DIR/modality_joint.json
+        DATASET_ROOT=$REPO_ROOT/datasets/RooibosT/G1_Dex1_BCT_subtask_joint_30hz
+        DEFAULT_MAX_STEPS=50000
+        ;;
+    *)  echo "variant must be joint|joint_h16|joint_wbc|joint_30hz|joint_30hz_relarm|joint_30hz_relarm_4view|joint_30hz_relarm_3view_clean|joint_30hz_relarm_4view_clean|joint_30hz_relarm_3view_aug|joint_30hz_relarm_4view_aug|ee" >&2; exit 1 ;;
 esac
+DEFAULT_MAX_STEPS="${DEFAULT_MAX_STEPS:-25000}"
 
-BASE_MODEL_PATH=/NHNHOME/WORKSPACE/chan/models/GR00T-N1.7-3B
+BASE_MODEL_PATH=$REPO_ROOT/models/GR00T-N1.7-3B
 TRAIN_DATASET="${DATASET_ROOT}_train"
 VAL_DATASET="${DATASET_ROOT}_val"
 EXP_NAME="g1_dex1_bct_${VARIANT}_b256${EXP_SUFFIX:-}"
-OUTPUT_DIR="/NHNHOME/WORKSPACE/chan/outputs/${EXP_NAME}"
+OUTPUT_DIR="$REPO_ROOT/outputs/${EXP_NAME}"
 WANDB_PROJECT_NAME=gr00t-n1.7-g1-dex1-bct
 
 # Effective batch 256 = global 32 (16/GPU) x accum 8 — the validated 2xB200 shape.
@@ -71,7 +138,7 @@ WANDB_PROJECT_NAME=gr00t-n1.7-g1-dex1-bct
 # the BCT AV1 videos use GOP=2, so single-thread random access stays cheap.
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-32}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
-MAX_STEPS="${MAX_STEPS:-25000}"                  # ~31 epochs at effective 256
+MAX_STEPS="${MAX_STEPS:-$DEFAULT_MAX_STEPS}"     # 15fps: 25k ~= 31 epochs; 30hz: 50k ~= 27 epochs
 SAVE_STEPS="${SAVE_STEPS:-2500}"
 NUM_WORKERS="${DATALOADER_NUM_WORKERS:-16}"
 STATE_DROPOUT="${STATE_DROPOUT:-0.2}"
@@ -85,7 +152,7 @@ if [ ! -f "$DATASET_ROOT/meta/episodes.jsonl" ]; then
     echo "ERROR: $DATASET_ROOT is not in LeRobot v2.1 layout (meta/episodes.jsonl missing)." >&2
     echo "Convert it first (uses the dedicated conversion venv):" >&2
     echo "  cd scripts/lerobot_conversion && .venv/bin/python convert_v3_to_v2.py \\" >&2
-    echo "    --repo-id BitRobot/$(basename "$DATASET_ROOT") --root /NHNHOME/WORKSPACE/chan/.cache/lerobot" >&2
+    echo "    --repo-id RooibosT/$(basename "$DATASET_ROOT") --root $REPO_ROOT/datasets" >&2
     exit 1
 fi
 
@@ -126,7 +193,7 @@ echo "  output          : $OUTPUT_DIR"
 # No numactl node binding: 16 workers x 2 ranks of video decode need both NUMA nodes.
 env \
     OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 \
-    NUM_GPUS=2 USE_WANDB=1 GLOBAL_BATCH_SIZE="$GLOBAL_BATCH_SIZE" \
+    NUM_GPUS="${NUM_GPUS:-2}" USE_WANDB=1 GLOBAL_BATCH_SIZE="$GLOBAL_BATCH_SIZE" \
     DATALOADER_NUM_WORKERS="$NUM_WORKERS" EPISODE_SAMPLING_RATE="$EP_SAMPLING_RATE" \
     SHARD_SIZE="$SHARD" MAX_STEPS="$MAX_STEPS" SAVE_STEPS="$SAVE_STEPS" \
     DATALOADER_FFMPEG_THREADS="$FFMPEG_THREADS" \
@@ -140,6 +207,7 @@ env \
     --experiment-name "$EXP_NAME" \
     --output-dir "$OUTPUT_DIR" \
     --save-only-model \
-    -- --save-total-limit 20 --gradient-accumulation-steps "$GRAD_ACCUM" \
+    -- --save-total-limit "${SAVE_TOTAL_LIMIT:-20}" --gradient-accumulation-steps "$GRAD_ACCUM" \
     --val-dataset-path "$VAL_DATASET" --eval-steps "${EVAL_STEPS:-2500}" \
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
     2>&1 | tee "$OUTPUT_DIR/train.log"

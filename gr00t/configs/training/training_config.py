@@ -102,6 +102,10 @@ class TrainingConfig:
     # DDP
     use_ddp: bool = False
     ddp_bucket_cap_mb: int = 100
+    # Allreduce gradients in bf16 instead of fp32 (halves DDP traffic). Matches the
+    # DeepSpeed recipe ("communication_data_type": "bf16" in zero2_config.json);
+    # master weights/optimizer stay fp32. Worthwhile on hosts without NVLink.
+    ddp_comm_bf16: bool = False
 
     # Hardware
     num_gpus: int = 1

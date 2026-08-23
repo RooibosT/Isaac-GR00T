@@ -81,6 +81,8 @@ if __name__ == "__main__":
     config.model.tune_projector = ft_config.tune_projector
     config.model.tune_diffusion_model = ft_config.tune_diffusion_model
     config.model.state_dropout_prob = ft_config.state_dropout_prob
+    config.model.state_dropout_keys = ft_config.state_dropout_keys
+    config.model.state_dropout_key_prob = ft_config.state_dropout_key_prob
     config.model.random_rotation_angle = ft_config.random_rotation_angle
     config.model.color_jitter_params = ft_config.color_jitter_params
     config.model.use_percentiles = ft_config.use_percentiles
@@ -113,6 +115,8 @@ if __name__ == "__main__":
     config.training.save_steps = ft_config.save_steps
     config.training.save_total_limit = ft_config.save_total_limit
     config.training.num_gpus = ft_config.num_gpus
+    config.training.use_ddp = ft_config.use_ddp
+    config.training.ddp_comm_bf16 = ft_config.ddp_comm_bf16
     config.training.use_wandb = ft_config.use_wandb
     config.training.max_steps = ft_config.max_steps
     config.training.weight_decay = ft_config.weight_decay

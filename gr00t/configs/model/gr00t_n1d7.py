@@ -117,6 +117,15 @@ class Gr00tN1d7Config(PretrainedConfig):
     # State augmentation parameters
     state_dropout_prob: float = 0.8  # State dropout probability
     exclude_state: bool = False  # Zero out all state inputs (ablation)
+    # Per-key state dropout, on top of state_dropout_prob. That one zeroes the
+    # *whole* state vector for a sampled fraction of examples, which cannot
+    # target one block: raising it also hides joint positions, and the block it
+    # was meant to weaken is still fully visible on every example it does not
+    # fire for. Naming keys here drops just those blocks, independently per key,
+    # so a model can be forced to keep working when a specific input is absent
+    # or unreliable. Empty list = disabled = previous behaviour.
+    state_dropout_keys: tuple[str, ...] = ()
+    state_dropout_key_prob: float = 0.0
     use_mean_std: bool = False  # Use mean/std normalization instead of min/max
 
     # Multi-embodiment parameters

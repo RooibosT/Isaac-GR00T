@@ -79,6 +79,15 @@ class FinetuneConfig:
     Dropout probability applied to state inputs for regularization during training.
     """
 
+    state_dropout_keys: tuple[str, ...] = ()
+    """State modality keys to drop independently of one another, in addition to
+    ``state_dropout_prob``'s whole-vector dropout. Use when one block needs to be
+    made unreliable on its own -- e.g. joint velocities, which let the model
+    extrapolate the near future instead of reading it off the images."""
+
+    state_dropout_key_prob: float = 0.0
+    """Probability that each key in ``state_dropout_keys`` is zeroed, per example."""
+
     # --- Data Augmentation ---
     random_rotation_angle: int | None = None
     """Maximum rotation angle (in degrees) for random rotation augmentation of input images."""
@@ -168,6 +177,19 @@ class FinetuneConfig:
 
     num_gpus: int = 1
     """Number of GPUs available for distributed or single-node training."""
+
+    use_ddp: bool = False
+    """Use plain PyTorch DDP instead of DeepSpeed ZeRO-2 for multi-GPU training.
+    DDP halves per-step communication (grad allreduce only, overlapped with
+    backward; ZeRO-2 adds a param allgather) at the cost of unsharded optimizer
+    state. Prefer it on hosts without NVLink, where inter-GPU traffic rides
+    slow PCIe/NUMA (`SYS`) paths and ZeRO-2 collectives dominate step time."""
+
+    ddp_comm_bf16: bool = False
+    """With use_ddp, allreduce gradients in bf16 instead of fp32 — halves DDP
+    traffic per step. Numerically this matches the validated DeepSpeed recipe
+    (zero2_config.json sets "communication_data_type": "bf16"); fp32 master
+    weights and optimizer state are unaffected. No effect without use_ddp."""
 
     use_wandb: bool = False
     """

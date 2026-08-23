@@ -179,6 +179,8 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 # State augmentation overrides
                 exclude_state=self.model_config.exclude_state,
                 state_dropout_prob=self.model_config.state_dropout_prob,
+                state_dropout_keys=getattr(self.model_config, "state_dropout_keys", ()),
+                state_dropout_key_prob=getattr(self.model_config, "state_dropout_key_prob", 0.0),
                 use_mean_std=self.model_config.use_mean_std,
                 **self.transformers_loading_kwargs,
             )
@@ -208,6 +210,8 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 # State augmentation
                 exclude_state=self.model_config.exclude_state,
                 state_dropout_prob=self.model_config.state_dropout_prob,
+                state_dropout_keys=getattr(self.model_config, "state_dropout_keys", ()),
+                state_dropout_key_prob=getattr(self.model_config, "state_dropout_key_prob", 0.0),
                 use_mean_std=self.model_config.use_mean_std,
                 transformers_loading_kwargs=self.transformers_loading_kwargs,
             )

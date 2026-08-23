@@ -310,6 +310,7 @@ def run(config: Config):
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         multiprocessing_context=config.data.multiprocessing_context,
+        ddp_comm_bf16=config.training.ddp_comm_bf16,
     )
 
     trainer.add_callback(

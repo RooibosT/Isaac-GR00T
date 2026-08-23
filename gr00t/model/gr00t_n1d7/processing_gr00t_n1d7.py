@@ -254,6 +254,8 @@ class Gr00tN1d7Processor(BaseProcessor):
         # State augmentation
         exclude_state: bool = False,
         state_dropout_prob: float = 0.0,
+        state_dropout_keys: tuple[str, ...] = (),
+        state_dropout_key_prob: float = 0.0,
         # Normalization
         use_mean_std: bool = False,
         letter_box_transform: bool = False,
@@ -281,6 +283,8 @@ class Gr00tN1d7Processor(BaseProcessor):
         # State augmentation settings
         self.exclude_state = exclude_state
         self.state_dropout_prob = state_dropout_prob
+        self.state_dropout_keys = set(state_dropout_keys or ())
+        self.state_dropout_key_prob = state_dropout_key_prob
 
         self.letter_box_transform = letter_box_transform
 
@@ -658,18 +662,28 @@ class Gr00tN1d7Processor(BaseProcessor):
         exclude_state = self.exclude_state or getattr(
             self.modality_configs[embodiment_tag.value]["state"], "exclude_state", False
         )
-        if exclude_state or (
+        drop_all = exclude_state or (
             self.state_dropout_prob > 0
             and random.random() < self.state_dropout_prob
             and self.training
-        ):
-            normalized_states = torch.cat(
-                [torch.from_numpy(np.zeros_like(state_data[key])) for key in state_keys], dim=-1
-            )
-        else:
-            normalized_states = torch.cat(
-                [torch.from_numpy(norm_state_dict[key]) for key in state_keys], dim=-1
-            )
+        )
+        # Per-key dropout draws once per key, so a named block can be made
+        # unreliable on its own while the rest of the state stays visible.
+        drop_key = self.state_dropout_keys and self.state_dropout_key_prob > 0 and self.training
+        normalized_states = torch.cat(
+            [
+                torch.from_numpy(np.zeros_like(state_data[key]))
+                if drop_all
+                or (
+                    drop_key
+                    and key in self.state_dropout_keys
+                    and random.random() < self.state_dropout_key_prob
+                )
+                else torch.from_numpy(norm_state_dict[key])
+                for key in state_keys
+            ],
+            dim=-1,
+        )
         normalized_states = torch.cat(
             [
                 normalized_states,
