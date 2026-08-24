@@ -160,12 +160,17 @@ def build_clips(src: Path, tasks: tuple[str, ...], still_eps: float, min_frames:
     clips = []
     for row in eps.itertuples():
         lo, hi = int(row.dataset_from_index), int(row.dataset_to_index)
-        keep = still[lo:hi] & np.isin(task_index[lo:hi], list(wanted))
-        for a, b in find_runs(keep, min_frames):
-            seg = task_index[lo + a : lo + b]
-            # a run can straddle a task boundary; label it by what it mostly is
-            label = name_of[int(np.bincount(seg).argmax())]
-            clips.append((int(row.episode_index), a, b, label))
+        # One mask per task, so a clip never crosses a task boundary. The first
+        # version masked all wanted tasks together and labelled each run by its
+        # majority task; with insert (median 5 s) flowing straight into rotate
+        # (median 30 s) that mislabelled 7.8% of frames and buried insert at
+        # 4.4% of the output. Cutting at the boundary makes labels exact and
+        # costs only the sub-min_frames stubs at the seams (~2% of frames).
+        for t in wanted:
+            keep = still[lo:hi] & (task_index[lo:hi] == t)
+            for a, b in find_runs(keep, min_frames):
+                clips.append((int(row.episode_index), a, b, name_of[t]))
+    clips.sort(key=lambda c: (c[0], c[1]))
     return frame, eps, clips
 
 
