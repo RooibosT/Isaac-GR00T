@@ -58,20 +58,35 @@ if __name__ == "__main__":
 
     dataset_paths = [path for path in ft_config.dataset_path.split(os.pathsep) if path]
 
-    config = get_default_config().load_dict(
+    dataset_specs = [
         {
-            "data": {
-                "download_cache": False,
-                "datasets": [
-                    {
-                        "dataset_paths": dataset_paths,
-                        "mix_ratio": 1.0,
-                        "embodiment_tag": embodiment_tag,
-                        "val_dataset_path": ft_config.val_dataset_path,
-                    }
-                ],
-            }
+            "dataset_paths": dataset_paths,
+            "mix_ratio": ft_config.mix_ratio,
+            "embodiment_tag": embodiment_tag,
+            "val_dataset_path": ft_config.val_dataset_path,
         }
+    ]
+    # Extra co-trained sources, each on its own embodiment tag so it keeps its own
+    # state/action projection. Their modality configs have to be imported here,
+    # on every rank, for the same reason the primary one is.
+    if ft_config.mixture_spec is not None:
+        import json
+
+        for entry in json.loads(Path(ft_config.mixture_spec).read_text()):
+            entry = dict(entry)
+            extra_modality = entry.pop("modality_config_path", None)
+            if extra_modality is not None:
+                load_modality_config(extra_modality)
+            entry["embodiment_tag"] = EmbodimentTag.resolve(entry["embodiment_tag"]).value
+            entry.setdefault("mix_ratio", 1.0)
+            dataset_specs.append(entry)
+        print(
+            f"Mixture of {len(dataset_specs)} dataset specs: "
+            + ", ".join(f"{d['embodiment_tag']}x{d['mix_ratio']}" for d in dataset_specs)
+        )
+
+    config = get_default_config().load_dict(
+        {"data": {"download_cache": False, "datasets": dataset_specs}}
     )
     config.load_config_path = None
 

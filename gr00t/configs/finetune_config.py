@@ -45,6 +45,22 @@ class FinetuneConfig:
     If None, use the pre-registered modality config in `gr00t/configs/data/embodiment_configs.py`.
     """
 
+    mixture_spec: str | None = None
+    """Path to a JSON file adding co-trained datasets alongside ``dataset_path``.
+
+    Each entry is ``{"dataset_paths": [...], "embodiment_tag": ..., "mix_ratio": ...}``
+    with an optional ``"modality_config_path"``, which is imported so the tag is
+    registered before the datasets are built. Use this when the extra source does
+    not share this run's state/action layout: giving it its own embodiment tag
+    gives it its own state and action projection, so only the trunk is shared.
+    ``dataset_path``/``embodiment_tag`` still describe the primary dataset, and
+    ``mix_ratio`` weights the primary against the entries here.
+    """
+
+    mix_ratio: float = 1.0
+    """Sampling weight of the primary dataset within the mixture. Only meaningful
+    together with ``mixture_spec``; weights are normalised across all entries."""
+
     val_dataset_path: str | None = None
     """Path to a held-out validation dataset root. When set, a fixed subset of its
     timesteps is preprocessed once (no augmentation, no state dropout) and evaluated
