@@ -44,27 +44,46 @@ declare -A DIRS=(
 # one GPU pair per run, matching how they were trained
 declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1")
 
+
 RUNS=("$@")
 [ ${#RUNS[@]} -eq 0 ] && RUNS=(u s n x ctl)
 
-for name in "${RUNS[@]}"; do
-    OUT="${DIRS[$name]:-}"
+# Each run owns a GPU pair, so the four training runs scan at the same time
+# rather than one after another. The merged val split carries 14,970 windows
+# against the older split's 614, so a checkpoint costs about 2.4x what it used to
+# and a sequential pass over five runs would take most of a day. The control goes
+# last because it shares GPUs 0,1 with run u.
+MERGE='
+import json, sys
+from pathlib import Path
+out = Path(sys.argv[1]); merged = {}
+for f in sorted(out.glob("scan_alltask_?.json")):
+    merged.update(json.loads(f.read_text()))
+(out / "scan_alltask.json").write_text(json.dumps(merged, indent=1))
+print(f"merged {len(merged)} checkpoints -> {out}/scan_alltask.json")
+'
+
+scan_one() {   # name
+    local name="$1"
+    local OUT="${DIRS[$name]:-}"
     if [ -z "$OUT" ] || [ ! -d "$OUT" ]; then
         echo "skip $name: no output directory at ${OUT:-<unset>}" >&2
-        continue
+        return
     fi
-    LOG="$ROOT/datasets/scan_alltask_$name.log"
+    local LOG="$ROOT/datasets/scan_alltask_$name.log"
+    local GA GB STEPS N HALF A B
     read -r GA GB <<< "${GPUS[$name]}"
 
     STEPS=$(find "$OUT" -maxdepth 1 -name 'checkpoint-*' -type d -printf '%f\n' \
             | sed 's/checkpoint-//' | sort -n)
     N=$(echo "$STEPS" | grep -c .)
-    [ "$N" -eq 0 ] && { echo "skip $name: no checkpoints" >&2; continue; }
+    if [ "$N" -eq 0 ]; then echo "skip $name: no checkpoints" >&2; return; fi
     HALF=$(( (N + 1) / 2 ))
     A=$(echo "$STEPS" | head -n "$HALF" | paste -sd,)
     B=$(echo "$STEPS" | tail -n +$((HALF + 1)) | paste -sd,)
     echo "[$(date '+%F %T')] $name: $N ckpts -> GPU $GA [$A] | GPU $GB [$B]" | tee -a "$LOG"
 
+    local pair g rest steps tag
     for pair in "$GA:$A:a" "$GB:$B:b"; do
         g=${pair%%:*}; rest=${pair#*:}; steps=${rest%:*}; tag=${rest##*:}
         [ -z "$steps" ] && continue
@@ -75,14 +94,18 @@ for name in "${RUNS[@]}"; do
     done
     wait
 
-    python - "$OUT" <<'PY' | tee -a "$LOG"
-import json, sys
-from pathlib import Path
-out = Path(sys.argv[1]); merged = {}
-for f in sorted(out.glob("scan_alltask_*.json")):
-    merged.update(json.loads(f.read_text()))
-(out / "scan_alltask.json").write_text(json.dumps(merged, indent=1))
-print(f"merged {len(merged)} checkpoints -> {out/'scan_alltask.json'}")
-PY
+    python -c "$MERGE" "$OUT" | tee -a "$LOG"
+}
+
+for name in "${RUNS[@]}"; do
+    [ "$name" = "ctl" ] && continue
+    scan_one "$name" &
 done
+wait
+
+for name in "${RUNS[@]}"; do
+    [ "$name" = "ctl" ] || continue
+    scan_one "$name"
+done
+
 echo "[$(date '+%F %T')] scans complete"
