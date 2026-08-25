@@ -59,7 +59,16 @@ set -uo pipefail
 ROOT="/home/chan/IKEA/Isaac-GR00T"
 cd "$ROOT"
 export PATH="$HOME/micromamba/envs/ffmpeg7/bin:$PATH"
-CONFIG="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+# The 46-dim state, NOT the 60-dim arm-velocity one that the deployed model uses.
+# The competition boundary (EXPERIMENTS.md section 11) hands over body_q(29) and
+# base_quat(4) and no velocity at all, so until that is settled a model that needs
+# arm_dq cannot be entered -- and feeding it zeros costs +26% on the executed
+# window, worse than never having had it. Arm velocity is worth 15% on arm8 and
+# 10% on EE8 (section 14), so it goes back in once the rules are known: rerun the
+# winning label scheme with
+#   CONFIG=.../g1_dex1_ikea_armvel_config.py EXP_PREFIX=_armvel bash this
+CONFIG="${CONFIG:-$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_relarm_3view_aug_config.py}"
+SUFFIX_EXTRA="${EXP_PREFIX:-}"
 STEPS="${MAX_STEPS:-30000}"
 KEEP="${SAVE_TOTAL_LIMIT:-8}"
 # 96 cores shared four ways, against 16 for a run on its own
@@ -72,11 +81,11 @@ launch() {   # name gpus dataset_prefix
         echo "  generate it first -- four runs racing to write it corrupts the file" >&2
         return 1
     fi
-    echo "[$(date '+%F %T')] launching $name on GPU $gpus  <- $(basename "$ds")"
+    echo "[$(date '+%F %T')] launching $name on GPU $gpus  <- $(basename "$ds")  [$(basename "$CONFIG")]"
     CUDA_VISIBLE_DEVICES="$gpus" \
     CONFIG="$CONFIG" \
     DATASET_ROOT="$ds" \
-    EXP_SUFFIX="_alltask_$name" \
+    EXP_SUFFIX="_alltask_$name$SUFFIX_EXTRA" \
     MAX_STEPS="$STEPS" \
     SAVE_TOTAL_LIMIT="$KEEP" \
     NUM_GPUS=2 \

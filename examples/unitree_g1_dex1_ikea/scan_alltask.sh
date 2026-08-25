@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Scan the four task-label runs, plus the control the ablation does not train.
 #
-# The control is the existing g1_dex1_ikea_relarm_3view_aug_b64_v2_armvel: it was
-# trained at the identical recipe (eff 64, cosine, seed 42, armvel config) on the
-# older three tasks alone, so re-scoring its checkpoint-20000 against the new val
-# split gives "what the old tasks looked like before the new ones arrived" for a
-# GPU-hour instead of a nine-hour rerun. Scoring is done by the policy's own
-# processor statistics, not the val set's, so pointing it at a different val
-# directory is legitimate.
+# The control is the existing g1_dex1_ikea_relarm_3view_aug_b64_v2: it was trained
+# at the identical recipe (eff 64, 20k, cosine, seed 42, same 46-dim config) on
+# the older three tasks alone, so re-scoring its checkpoint-20000 against the new
+# val split gives "what the old tasks looked like before the new ones arrived" for
+# a GPU-hour instead of a nine-hour rerun. Scoring uses the policy's own processor
+# statistics, not the val set's, so pointing it at a different val directory is
+# legitimate.
+#
+# It must be the 46-dim run, not `..._v2_armvel`: the four runs here carry no arm
+# velocity, and a control with an input they lack would confound the comparison
+# with the 15%-on-arm8 velocity effect.
 #
 # Every run is scored on the SAME val split -- the unified one -- whatever labels
 # it was trained with. That matters: scan_ikea.py reads the task string out of
@@ -25,7 +29,7 @@ cd "$ROOT"
 export LD_LIBRARY_PATH="$HOME/micromamba/envs/ffmpeg7/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 source "$ROOT/.venv/bin/activate"
 
-CONFIG="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+CONFIG="${CONFIG:-$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_relarm_3view_aug_config.py}"
 VAL="${VAL:-$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_unified_val}"
 STRIDE="${STRIDE:-10}"
 
@@ -35,7 +39,7 @@ declare -A DIRS=(
   [s]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_s/g1_dex1_ikea_relarm_3view_aug_b64_alltask_s"
   [n]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_n/g1_dex1_ikea_relarm_3view_aug_b64_alltask_n"
   [x]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_x/g1_dex1_ikea_relarm_3view_aug_b64_alltask_x"
-  [ctl]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_v2_armvel/g1_dex1_ikea_relarm_3view_aug_b64_v2_armvel"
+  [ctl]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_v2/g1_dex1_ikea_relarm_3view_aug_b64_v2"
 )
 # one GPU pair per run, matching how they were trained
 declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1")
