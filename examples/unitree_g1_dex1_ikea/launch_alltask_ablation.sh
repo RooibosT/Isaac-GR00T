@@ -59,6 +59,9 @@ set -uo pipefail
 ROOT="/home/chan/IKEA/Isaac-GR00T"
 cd "$ROOT"
 export PATH="$HOME/micromamba/envs/ffmpeg7/bin:$PATH"
+# torchrun lives in the venv; without this every run dies instantly on
+# "exec: torchrun: not found" and leaves the GPUs idle with no error in sight
+source "$ROOT/.venv/bin/activate"
 # The 46-dim state, NOT the 60-dim arm-velocity one that the deployed model uses.
 # The competition boundary (EXPERIMENTS.md section 11) hands over body_q(29) and
 # base_quat(4) and no velocity at all, so until that is settled a model that needs
@@ -74,6 +77,11 @@ KEEP="${SAVE_TOTAL_LIMIT:-8}"
 # 96 cores shared four ways, against 16 for a run on its own
 WORKERS="${DATALOADER_NUM_WORKERS:-10}"
 
+# examples/finetune.sh defaults MASTER_PORT to 29500, so four concurrent torchrun
+# jobs would all try to bind the same rendezvous port. One per run.
+PORT_BASE="${MASTER_PORT_BASE:-29510}"
+port_offset=0
+
 launch() {   # name gpus dataset_prefix
     local name="$1" gpus="$2" ds="$3"
     if [ ! -f "${ds}_train/meta/stats.json" ]; then
@@ -81,8 +89,10 @@ launch() {   # name gpus dataset_prefix
         echo "  generate it first -- four runs racing to write it corrupts the file" >&2
         return 1
     fi
-    echo "[$(date '+%F %T')] launching $name on GPU $gpus  <- $(basename "$ds")  [$(basename "$CONFIG")]"
+    echo "[$(date '+%F %T')] launching $name on GPU $gpus port $((PORT_BASE + port_offset))" \
+         "<- $(basename "$ds")  [$(basename "$CONFIG")]"
     CUDA_VISIBLE_DEVICES="$gpus" \
+    MASTER_PORT="$((PORT_BASE + port_offset))" \
     CONFIG="$CONFIG" \
     DATASET_ROOT="$ds" \
     EXP_SUFFIX="_alltask_$name$SUFFIX_EXTRA" \
@@ -93,6 +103,7 @@ launch() {   # name gpus dataset_prefix
     nohup bash examples/unitree_g1_dex1_ikea/run_finetune_ikea.sh \
         --use-ddp --ddp-comm-bf16 \
         > "$ROOT/datasets/train_alltask_$name.log" 2>&1 &
+    port_offset=$((port_offset + 1))
     sleep 20   # stagger, so four ranks do not open the same shards at once
 }
 
