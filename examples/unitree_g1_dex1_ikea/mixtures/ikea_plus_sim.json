@@ -1,0 +1,8 @@
+[
+  {
+    "dataset_paths": ["datasets/carroll511/G1_Dex1_LW_sim_20hz_still"],
+    "embodiment_tag": "new_embodiment_2",
+    "mix_ratio": 1.0,
+    "modality_config_path": "examples/unitree_g1_dex1_ikea/lw_sim_ee_config.py"
+  }
+]

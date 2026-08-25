@@ -130,6 +130,13 @@ class EmbodimentTag(Enum):
     Any new embodiment.
     """
 
+    NEW_EMBODIMENT_2 = "new_embodiment_2"
+    """
+    A second new embodiment, for mixing a source that does not share the first
+    one's state and action layout -- e.g. training the real robot alongside a
+    simulator whose action is end-effector pose rather than joints.
+    """
+
     ROBOCASA_GR1_TABLETOP = "robocasa_gr1_tabletop"
     """
     RoboCasa GR1 tabletop tasks with arms, waist, and Fourier hands.
