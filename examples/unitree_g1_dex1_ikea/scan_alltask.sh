@@ -33,6 +33,17 @@ CONFIG="${CONFIG:-$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_relarm_3view_
 VAL="${VAL:-$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_unified_val}"
 STRIDE="${STRIDE:-10}"
 
+# Cap the maths threads. torch and BLAS both size their pools from the core count,
+# so eight concurrent scans opened 331 threads each and asked for ~1200% CPU
+# apiece; the box ran at load 268 on 96 cores and the GPUs sat at 0-14% while the
+# per-window FK loop (80 wrist solves x 1,513 windows per checkpoint) thrashed.
+# Measured cost of leaving this unset: 78 min per checkpoint against 37 expected.
+# The training launcher has always set these; the scan path never did.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export MKL_NUM_THREADS="$OMP_NUM_THREADS"
+export OPENBLAS_NUM_THREADS="$OMP_NUM_THREADS"
+export NUMEXPR_NUM_THREADS="$OMP_NUM_THREADS"
+
 # name -> output dir holding the checkpoints
 declare -A DIRS=(
   [u]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_u/g1_dex1_ikea_relarm_3view_aug_b64_alltask_u"
