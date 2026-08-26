@@ -46,6 +46,11 @@ export NUMEXPR_NUM_THREADS="$OMP_NUM_THREADS"
 
 # name -> output dir holding the checkpoints
 declare -A DIRS=(
+  [m16]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_m16/g1_dex1_ikea_relarm_3view_aug_b64_alltask_m16"
+  [m30]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_m30/g1_dex1_ikea_relarm_3view_aug_b64_alltask_m30"
+  [uv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_uv/g1_dex1_ikea_relarm_3view_aug_b64_alltask_uv"
+  [mv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_mv/g1_dex1_ikea_relarm_3view_aug_b64_alltask_mv"
+  [ctlv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_v2_armvel/g1_dex1_ikea_relarm_3view_aug_b64_v2_armvel"
   [u]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_u/g1_dex1_ikea_relarm_3view_aug_b64_alltask_u"
   [s]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_s/g1_dex1_ikea_relarm_3view_aug_b64_alltask_s"
   [n]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_n/g1_dex1_ikea_relarm_3view_aug_b64_alltask_n"
@@ -53,7 +58,16 @@ declare -A DIRS=(
   [ctl]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_v2/g1_dex1_ikea_relarm_3view_aug_b64_v2"
 )
 # one GPU pair per run, matching how they were trained
-declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1")
+declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1" \
+                 [m16]="0 1" [m30]="2 3" [uv]="4 5" [mv]="6 7" [ctlv]="0 1")
+
+# Runs whose config carries arm velocity; the rest use the 46-dim one. Scoring a
+# 60-dim checkpoint against the 46-dim config silently feeds it the wrong state.
+declare -A CFGS=(
+  [uv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+  [mv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+  [ctlv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+)
 
 
 RUNS=("$@")
@@ -82,8 +96,9 @@ scan_one() {   # name
         return
     fi
     local LOG="$ROOT/datasets/scan_alltask_$name.log"
-    local GA GB STEPS N HALF A B
+    local GA GB STEPS N HALF A B CFG
     read -r GA GB <<< "${GPUS[$name]}"
+    CFG="${CFGS[$name]:-$CONFIG}"
 
     STEPS=$(find "$OUT" -maxdepth 1 -name 'checkpoint-*' -type d -printf '%f\n' \
             | sed 's/checkpoint-//' | sort -n)
@@ -92,14 +107,14 @@ scan_one() {   # name
     HALF=$(( (N + 1) / 2 ))
     A=$(echo "$STEPS" | head -n "$HALF" | paste -sd,)
     B=$(echo "$STEPS" | tail -n +$((HALF + 1)) | paste -sd,)
-    echo "[$(date '+%F %T')] $name: $N ckpts -> GPU $GA [$A] | GPU $GB [$B]" | tee -a "$LOG"
+    echo "[$(date '+%F %T')] $name: $N ckpts ($(basename "$CFG")) -> GPU $GA [$A] | GPU $GB [$B]" | tee -a "$LOG"
 
     local pair g rest steps tag
     for pair in "$GA:$A:a" "$GB:$B:b"; do
         g=${pair%%:*}; rest=${pair#*:}; steps=${rest%:*}; tag=${rest##*:}
         [ -z "$steps" ] && continue
         CUDA_VISIBLE_DEVICES="$g" python "$ROOT/examples/unitree_g1_dex1_ikea/scan_ikea.py" \
-            --checkpoints-dir "$OUT" --dataset-path "$VAL" --config "$CONFIG" \
+            --checkpoints-dir "$OUT" --dataset-path "$VAL" --config "$CFG" \
             --stride "$STRIDE" --steps "$steps" \
             --output "$OUT/scan_alltask_$tag.json" >> "$LOG" 2>&1 &
     done
@@ -108,15 +123,15 @@ scan_one() {   # name
     python -c "$MERGE" "$OUT" | tee -a "$LOG"
 }
 
+# controls share GPU pairs with the training runs, so they go last
 for name in "${RUNS[@]}"; do
-    [ "$name" = "ctl" ] && continue
+    case "$name" in ctl|ctlv) continue;; esac
     scan_one "$name" &
 done
 wait
 
 for name in "${RUNS[@]}"; do
-    [ "$name" = "ctl" ] || continue
-    scan_one "$name"
+    case "$name" in ctl|ctlv) scan_one "$name";; esac
 done
 
 echo "[$(date '+%F %T')] scans complete"

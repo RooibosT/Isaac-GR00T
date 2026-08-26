@@ -1,0 +1,8 @@
+[
+  {
+    "dataset_paths": ["datasets/carroll511/G1_Dex1_IKEA_newonly_30hz_train"],
+    "embodiment_tag": "new_embodiment",
+    "mix_ratio": 1.0,
+    "val_dataset_path": "datasets/carroll511/G1_Dex1_IKEA_newonly_30hz_val"
+  }
+]

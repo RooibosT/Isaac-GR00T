@@ -17,6 +17,8 @@ set -uo pipefail
 ROOT="/home/chan/IKEA/Isaac-GR00T"
 cd "$ROOT"
 RUNS="${RUNS:-u s n x}"
+# what to scan once those exit; controls are appended so they run last
+SCAN="${SCAN:-$RUNS ctl}"
 
 for r in $RUNS; do
     pat="output_dir $ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltas[k]_$r "
@@ -34,5 +36,6 @@ for r in $RUNS; do
     echo "   $r: $n checkpoints"
 done
 
-bash "$ROOT/examples/unitree_g1_dex1_ikea/scan_alltask.sh"
+# shellcheck disable=SC2086
+bash "$ROOT/examples/unitree_g1_dex1_ikea/scan_alltask.sh" $SCAN
 echo "[$(date '+%F %T')] scanning finished"
