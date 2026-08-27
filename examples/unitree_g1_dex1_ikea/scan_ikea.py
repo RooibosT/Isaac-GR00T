@@ -66,8 +66,9 @@ XR_REPO = "/home/chan/IKEA/url_lerobot/xr_teleoperate"
 FIRST_KS = (5, 8, 16)
 
 
-def build_windows(loader, embodiment_tag, horizon, stride, tasks):
+def build_windows(loader, embodiment_tag, horizon, stride, tasks, relabel=None):
     """(episode, task, parsed_obs, gt[horizon, D]) every `stride` frames."""
+    relabel = relabel or {}
     obs_configs = deepcopy(loader.modality_configs)
     obs_configs.pop("action")
     action_keys = loader.modality_configs["action"].modality_keys
@@ -87,7 +88,7 @@ def build_windows(loader, embodiment_tag, horizon, stride, tasks):
             for k, v in dp.images.items():
                 obs[f"video.{k}"] = np.array(v)
             for lk in loader.modality_configs["language"].modality_keys:
-                obs[lk] = dp.text
+                obs[lk] = relabel.get(dp.text, dp.text)
             windows.append(
                 (
                     ep,
@@ -183,6 +184,19 @@ def main():
     # inputs, which a plain A/B between two runs cannot separate from a general
     # accuracy difference.
     ap.add_argument("--zero-state-keys", nargs="*", default=[])
+    # Score a model on a val split whose task strings it was never trained on,
+    # without feeding it those strings. The val label still does the grouping, so
+    # `--relabel "spin the crossbars around=turn the tabletop square"` reports the
+    # two rotation directions separately while the policy hears the one string a
+    # unified model knows. Aggregating them, as the unified val does, cannot show
+    # a model that is good at one direction and bad at the other.
+    ap.add_argument(
+        "--relabel",
+        nargs="*",
+        default=[],
+        metavar="FROM=TO",
+        help="rewrite the instruction fed to the policy; grouping keeps the val label",
+    )
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -213,8 +227,11 @@ def main():
     tasks = [
         json.loads(line)["tasks"][0] for line in open(args.dataset_path / "meta/episodes.jsonl")
     ]
+    relabel = dict(pair.split("=", 1) for pair in args.relabel)
+    if relabel:
+        logging.info("relabelling instructions: %s", relabel)
     loader = LeRobotEpisodeLoader(dataset_path=str(args.dataset_path), modality_configs=modality)
-    windows = build_windows(loader, tag, horizon, args.stride, tasks)
+    windows = build_windows(loader, tag, horizon, args.stride, tasks, relabel)
     logging.info("windows: %d (stride %d)", len(windows), args.stride)
 
     kin = G1WristKinematics(XR_REPO, waist_zero=True)
