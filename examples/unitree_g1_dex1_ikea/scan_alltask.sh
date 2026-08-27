@@ -59,6 +59,7 @@ declare -A DIRS=(
   [p]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_p/g1_dex1_ikea_relarm_3view_aug_b64_pnp_p"
   [pv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pv/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pv"
   [pvt]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pvt/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pvt"
+  [leg]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_leg_armvel/g1_dex1_ikea_relarm_3view_aug_b64_leg_armvel"
 )
 
 # The pick-and-place runs are scored on their own val split, not the unified one.
@@ -72,11 +73,15 @@ declare -A VALS=(
   [p]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_pnp_val"
   [pv]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_pnp_val"
   [pvt]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_pnptq_val"
+  # byte-for-byte the old three-task val, so ctlv's existing per-task numbers --
+  # measured on the unified val, which holds the same 15 episodes plus the two new
+  # tasks -- are the control without needing a re-scan
+  [leg]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_leg_30hz_val"
 )
 # one GPU pair per run, matching how they were trained
 declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1" \
                  [m16]="0 1" [m30]="2 3" [uv]="4 5" [mv]="6 7" [ctlv]="0 1" \
-                 [p]="0 1" [pv]="2 3" [pvt]="4 5")
+                 [p]="0 1" [pv]="2 3" [pvt]="4 5" [leg]="6 7")
 
 # Runs whose config carries arm velocity; the rest use the 46-dim one. Scoring a
 # 60-dim checkpoint against the 46-dim config silently feeds it the wrong state.
@@ -86,6 +91,7 @@ declare -A CFGS=(
   [ctlv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
   [pv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
   [pvt]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_torque_config.py"
+  [leg]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
 )
 
 

@@ -11,11 +11,14 @@ set -uo pipefail
 
 ROOT="/home/chan/IKEA/Isaac-GR00T"
 cd "$ROOT"
-RUNS="${RUNS:-p pv pvt}"
+RUNS="${RUNS:-p pv pvt leg}"
 SCAN="${SCAN:-$RUNS}"
 
+# the leg run lives under a different suffix, so its pattern is built separately
+suffix_of() { case "$1" in leg) echo "leg_armvel";; *) echo "pnp_$1";; esac; }
+
 for r in $RUNS; do
-    pat="output_dir $ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pn[p]_$r "
+    pat="output_dir $ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_$(suffix_of "$r" | sed 's/^\(.\)/[\1]/') "
     echo "[$(date '+%F %T')] waiting for run $r ..."
     while pgrep -f "$pat" > /dev/null 2>&1; do sleep 120; done
     echo "[$(date '+%F %T')] run $r has exited"
@@ -25,7 +28,7 @@ sleep 90   # let the final checkpoint and the wandb sync flush
 
 echo "[$(date '+%F %T')] all runs done; checkpoints written:"
 for r in $RUNS; do
-    d="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_$r/g1_dex1_ikea_relarm_3view_aug_b64_pnp_$r"
+    d="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_$(suffix_of "$r")/g1_dex1_ikea_relarm_3view_aug_b64_$(suffix_of "$r")"
     n=$(find "$d" -maxdepth 1 -name 'checkpoint-*' -type d 2>/dev/null | wc -l)
     echo "   $r: $n checkpoints"
 done
