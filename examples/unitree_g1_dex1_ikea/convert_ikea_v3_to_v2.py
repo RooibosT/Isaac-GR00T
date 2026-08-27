@@ -39,6 +39,17 @@ Two things are not straight copies:
 `--verify` decodes sampled frames out of the cut clips and compares them against
 the same frames decoded from the source, which is the only real proof that the
 seek arithmetic is right.
+
+`--merge-tasks` fuses runs of consecutive episodes back into one. The source is
+two continuous recordings -- file-000 holds 42,943 frames and its episodes sum to
+exactly 42,943 over `[0, 42943)`, file-001 likewise -- so an episode boundary is a
+label cut, not a splice, and re-joining `pick` to `insert` recovers a stretch of
+motion that is otherwise unreachable: with `allow_padding=False` the sampler only
+starts a window where the whole horizon fits, so the last `horizon - 1` frames of
+every episode are never a window start and the grasp-to-lift transition has no
+supervision at all. Merging is still gated per boundary on state continuity
+(`--merge-jump-tol`), because a cut made to mark a failed attempt can carry a
+sensor discontinuity the frame count cannot see.
 """
 
 from __future__ import annotations
@@ -106,8 +117,117 @@ def cut_clip(src: Path, first_frame: int, n_frames: int, dst: Path, fps: float, 
     subprocess.run(cmd, check=True, capture_output=True, timeout=900)
 
 
-def build_meta(src: Path, out: Path, eps: pd.DataFrame, episode_ids: list[int]) -> dict:
-    """Write meta/ for the subset `episode_ids`, renumbered 0..N-1 in file order."""
+def build_groups(
+    src: Path,
+    eps: pd.DataFrame,
+    episode_ids: list[int],
+    merge_tasks: set[str],
+    tol: float,
+) -> list[list[int]]:
+    """Group `episode_ids` into output episodes, fusing contiguous merge-task runs.
+
+    A run is fused only where the source frames really do abut -- same video file
+    and `to_timestamp == from_timestamp` on every camera -- and where the state
+    does not step further across the cut than it ever steps inside an episode.
+    That second test is the one that matters here: nothing in the frame counts
+    can distinguish a cut made mid-take from a cut made because the attempt
+    failed and had to be restarted, but a restart shows up as a joint or gripper
+    reading that moves further in one frame than the robot ever moves.
+    """
+    if not merge_tasks:
+        return [[i] for i in episode_ids]
+
+    fps = float(json.loads((src / "meta/info.json").read_text())["fps"])
+    data = pd.read_parquet(src / "data/chunk-000/file-000.parquet")
+    state = np.stack([np.asarray(x, dtype=np.float32) for x in data["observation.state"]])
+    lo = eps["dataset_from_index"].to_numpy()
+    hi = eps["dataset_to_index"].to_numpy()
+
+    # the largest one-frame move of each dim seen strictly inside an episode
+    within = np.zeros(state.shape[1], dtype=np.float32)
+    for a, b in zip(lo, hi):
+        if b - a > 1:
+            within = np.maximum(within, np.abs(np.diff(state[a:b], axis=0)).max(0))
+
+    def abuts(k: int, nxt: int) -> bool:
+        if hi[k] != lo[nxt]:
+            return False
+        for cam in CAMERAS:
+            vk = video_key(cam)
+            if eps[f"videos/{vk}/file_index"].iloc[k] != eps[f"videos/{vk}/file_index"].iloc[nxt]:
+                return False
+            gap = abs(
+                float(eps[f"videos/{vk}/to_timestamp"].iloc[k])
+                - float(eps[f"videos/{vk}/from_timestamp"].iloc[nxt])
+            )
+            if gap > 0.5 / fps:
+                return False
+        return True
+
+    def continuous(k: int, nxt: int) -> tuple[bool, float, int]:
+        jump = np.abs(state[hi[k] - 1] - state[lo[nxt]])
+        ratio = jump / np.maximum(within, 1e-6)
+        d = int(np.argmax(ratio))
+        return bool(ratio[d] <= tol), float(ratio[d]), d
+
+    task_of = {i: str(eps["tasks"].iloc[i][0]) for i in episode_ids}
+    order = list(episode_ids)
+    groups: list[list[int]] = []
+    refused: list[tuple[int, int, float, int]] = []
+    i = 0
+    while i < len(order):
+        k = order[i]
+        if task_of[k] not in merge_tasks:
+            groups.append([k])
+            i += 1
+            continue
+        grp = [k]
+        while i + 1 < len(order):
+            nxt = order[i + 1]
+            if task_of[nxt] not in merge_tasks or nxt != order[i] + 1 or not abuts(order[i], nxt):
+                break
+            ok, ratio, d = continuous(order[i], nxt)
+            if not ok:
+                refused.append((order[i], nxt, ratio, d))
+                break
+            grp.append(nxt)
+            i += 1
+        groups.append(grp)
+        i += 1
+
+    sizes = {}
+    for g in groups:
+        if len(g) > 1:
+            sizes[len(g)] = sizes.get(len(g), 0) + 1
+    merged = sum(sizes.values())
+    print(f"  merge: {len(order)} source episodes -> {len(groups)} output episodes")
+    print(f"         {merged} fused groups, sizes {dict(sorted(sizes.items()))}")
+    if tol < 0:
+        print(f"         label only: {len(refused)} joins available, none taken")
+    else:
+        for a, b, ratio, d in refused:
+            print(
+                f"         refused ep{a}->ep{b}: state dim {d} steps "
+                f"{ratio:.1f}x its within-episode max"
+            )
+        if not refused:
+            print("         no boundary refused (every cut is continuous in state)")
+    return groups
+
+
+def build_meta(
+    src: Path,
+    out: Path,
+    eps: pd.DataFrame,
+    groups: list[list[int]],
+    merge_tasks: set[str],
+    merge_label: str,
+) -> tuple[dict, dict[int, int]]:
+    """Write meta/ for `groups`, one output episode per group, renumbered 0..N-1.
+
+    Returns the info dict and the source-to-output `task_index` remap that the
+    parquet writer has to apply: fusing two tasks into one retires their indices.
+    """
     (out / "meta").mkdir(parents=True, exist_ok=True)
     info3 = json.loads((src / "meta/info.json").read_text())
     mod3 = json.loads((src / "meta/modality.json").read_text())
@@ -115,29 +235,42 @@ def build_meta(src: Path, out: Path, eps: pd.DataFrame, episode_ids: list[int]) 
     # tasks.parquet carries the task string as the frame index
     task_names = {int(v): str(k) for k, v in tasks["task_index"].items()}
 
+    def label_of(old_i: int) -> str:
+        t = str(eps["tasks"].iloc[old_i][0])
+        return merge_label if t in merge_tasks else t
+
+    if merge_tasks:
+        kept = sorted({label_of(g[0]) for g in groups})
+        new_index = {name: i for i, name in enumerate(kept)}
+        remap = {
+            old: new_index[merge_label if name in merge_tasks else name]
+            for old, name in task_names.items()
+            if (merge_label if name in merge_tasks else name) in new_index
+        }
+        task_names = {i: name for name, i in new_index.items()}
+    else:
+        remap = {i: i for i in task_names}
+
     with (out / "meta/tasks.jsonl").open("w") as fh:
         for idx in sorted(task_names):
             fh.write(json.dumps({"task_index": idx, "task": task_names[idx]}) + "\n")
 
-    used = set()
     with (out / "meta/episodes.jsonl").open("w") as fh:
-        for new_i, old_i in enumerate(episode_ids):
-            row = eps.iloc[old_i]
-            task_list = [str(t) for t in row["tasks"]]
-            used.update(task_list)
+        for new_i, grp in enumerate(groups):
             fh.write(
                 json.dumps(
                     {
                         "episode_index": new_i,
-                        "tasks": task_list,
-                        "length": int(row["length"]),
+                        "tasks": [label_of(grp[0])],
+                        "length": int(sum(int(eps["length"].iloc[g]) for g in grp)),
                     }
                 )
                 + "\n"
             )
 
-    total_frames = int(eps.iloc[episode_ids]["length"].sum())
-    n_eps = len(episode_ids)
+    flat = [g for grp in groups for g in grp]
+    total_frames = int(eps.iloc[flat]["length"].sum())
+    n_eps = len(groups)
     info = {
         "codebase_version": "v2.1",
         "robot_type": info3.get("robot_type", "Unitree_G1_Dex1_IKEA"),
@@ -170,16 +303,19 @@ def build_meta(src: Path, out: Path, eps: pd.DataFrame, episode_ids: list[int]) 
     if "_ikea" in mod3:
         modality["_ikea"] = mod3["_ikea"]
     (out / "meta/modality.json").write_text(json.dumps(modality, indent=4))
-    return info
+    return info, remap
 
 
 def convert(
     src: Path,
     out: Path,
-    episode_ids: list[int],
+    groups: list[list[int]],
     *,
     jobs: int,
     crf: int,
+    merge_tasks: set[str] = frozenset(),
+    merge_label: str = "",
+    link_index: dict[tuple[int, ...], int] | None = None,
     link_from: Path | None = None,
 ) -> None:
     eps = pd.read_parquet(src / "meta/episodes/chunk-000/file-000.parquet")
@@ -190,41 +326,51 @@ def convert(
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    info = build_meta(src, out, eps, episode_ids)
+    info, remap = build_meta(src, out, eps, groups, merge_tasks, merge_label)
     print(f"  meta written: {info['total_episodes']} eps / {info['total_frames']} frames")
 
     # ---- data ----
     data = pd.read_parquet(src / "data/chunk-000/file-000.parquet")
-    groups = {int(k): v for k, v in data.groupby("episode_index")}
-    for new_i, old_i in enumerate(episode_ids):
-        sub = groups[old_i]
+    by_ep = {int(k): v for k, v in data.groupby("episode_index")}
+    for new_i, grp in enumerate(groups):
+        sub = pd.concat([by_ep[g] for g in grp], ignore_index=True)
+        if len(grp) > 1:
+            # frame_index and timestamp restart at every source episode, so a fused
+            # episode has to be renumbered or the loader sees the clock jump back
+            n = len(sub)
+            sub["frame_index"] = np.arange(n, dtype=sub["frame_index"].dtype)
+            sub["timestamp"] = (np.arange(n) / fps).astype(sub["timestamp"].dtype)
+        sub["episode_index"] = np.full(len(sub), new_i, dtype=sub["episode_index"].dtype)
+        sub["task_index"] = sub["task_index"].map(remap).astype(sub["task_index"].dtype)
         dst = out / f"data/chunk-{new_i // CHUNK_SIZE:03d}/episode_{new_i:06d}.parquet"
         dst.parent.mkdir(parents=True, exist_ok=True)
-        sub.reset_index(drop=True).to_parquet(dst, index=False)
-    print(f"  data: {len(episode_ids)} episode parquets written")
+        sub.to_parquet(dst, index=False)
+    print(f"  data: {len(groups)} episode parquets written")
 
     # ---- video ----
     tasks: list[tuple] = []
-    for new_i, old_i in enumerate(episode_ids):
-        row = eps.iloc[old_i]
+    for new_i, grp in enumerate(groups):
+        head = eps.iloc[grp[0]]
+        length = int(sum(int(eps["length"].iloc[g]) for g in grp))
         for cam in CAMERAS:
             dst = (
                 out
                 / f"videos/chunk-{new_i // CHUNK_SIZE:03d}/{video_key(cam)}/episode_{new_i:06d}.mp4"
             )
             if link_from is not None:
+                src_i = link_index[tuple(grp)]
                 srcclip = (
                     link_from
-                    / f"videos/chunk-{old_i // CHUNK_SIZE:03d}/{video_key(cam)}/episode_{old_i:06d}.mp4"
+                    / f"videos/chunk-{src_i // CHUNK_SIZE:03d}/{video_key(cam)}/episode_{src_i:06d}.mp4"
                 )
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.hardlink_to(srcclip)
                 continue
-            fi = int(row[f"videos/{video_key(cam)}/file_index"])
-            t0 = float(row[f"videos/{video_key(cam)}/from_timestamp"])
+            fi = int(head[f"videos/{video_key(cam)}/file_index"])
+            t0 = float(head[f"videos/{video_key(cam)}/from_timestamp"])
             f0 = int(round(t0 * fps))
             srcvid = src / f"videos/{video_key(cam)}/chunk-000/file-{fi:03d}.mp4"
-            tasks.append((srcvid, f0, int(row["length"]), dst, fps, crf))
+            tasks.append((srcvid, f0, length, dst, fps, crf))
 
     if tasks:
         done = 0
@@ -236,24 +382,29 @@ def convert(
                 if done % 200 == 0 or done == len(tasks):
                     print(f"  video: {done}/{len(tasks)} clips", flush=True)
     else:
-        print(f"  video: {len(episode_ids) * len(CAMERAS)} clips hardlinked")
+        print(f"  video: {len(groups) * len(CAMERAS)} clips hardlinked")
 
 
-def verify(src: Path, out: Path, episode_ids: list[int], n_samples: int, fps: float) -> None:
-    """Decode sampled frames from the cut clips and from the source; compare pixels."""
+def verify(src: Path, out: Path, groups: list[list[int]], n_samples: int, fps: float) -> None:
+    """Decode sampled frames from the cut clips and from the source; compare pixels.
+
+    For a fused group this is also the check that the join is real: the sampled
+    offsets are taken across the whole merged length, so a clip that silently
+    stopped at the first source episode fails on the frame count alone.
+    """
     from torchcodec.decoders import VideoDecoder
 
     eps = pd.read_parquet(src / "meta/episodes/chunk-000/file-000.parquet")
     rng = np.random.default_rng(0)
-    picks = rng.choice(len(episode_ids), size=min(n_samples, len(episode_ids)), replace=False)
+    picks = rng.choice(len(groups), size=min(n_samples, len(groups)), replace=False)
     worst = 0.0
     n_checked = 0
     # exact-mode indexing of the multi-thousand-frame sources is expensive; build once
     sources: dict[tuple[str, int], object] = {}
     for new_i in sorted(picks):
-        old_i = episode_ids[new_i]
-        row = eps.iloc[old_i]
-        L = int(row["length"])
+        grp = groups[new_i]
+        row = eps.iloc[grp[0]]
+        L = int(sum(int(eps["length"].iloc[g]) for g in grp))
         for cam in CAMERAS:
             fi = int(row[f"videos/{video_key(cam)}/file_index"])
             f0 = int(round(float(row[f"videos/{video_key(cam)}/from_timestamp"]) * fps))
@@ -274,7 +425,12 @@ def verify(src: Path, out: Path, episode_ids: list[int], n_samples: int, fps: fl
                 raise SystemExit(
                     f"FAIL ep{new_i} {cam}: clip has {cd.metadata.num_frames} frames, expected {L}"
                 )
-            for j in (0, L // 2, L - 1):
+            seams = []
+            acc = 0
+            for g in grp[:-1]:
+                acc += int(eps["length"].iloc[g])
+                seams += [acc - 1, acc]
+            for j in sorted({0, L // 2, L - 1, *seams}):
                 a = sd.get_frame_at(f0 + j).data.float()
                 b = cd.get_frame_at(j).data.float()
                 err = (a - b).abs().mean().item()
@@ -302,7 +458,38 @@ def main() -> None:
     ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--verify-samples", type=int, default=12)
     ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument(
+        "--merge-tasks",
+        default="",
+        help="comma-separated task strings to fuse across contiguous episodes",
+    )
+    ap.add_argument("--merge-label", default="", help="instruction the fused episodes are given")
+    ap.add_argument(
+        "--link-clips-from",
+        type=Path,
+        default=None,
+        help="reuse the mp4s of an existing conversion instead of re-encoding. Only "
+        "valid when that conversion has the same episode grouping -- which is the "
+        "case for a re-export that adds state columns and leaves the video alone.",
+    )
+    ap.add_argument(
+        "--merge-label-only",
+        action="store_true",
+        help="apply --merge-label without fusing any episode: isolates what the "
+        "instruction alone buys from what the recovered boundary windows buy",
+    )
+    ap.add_argument(
+        "--merge-jump-tol",
+        type=float,
+        default=1.0,
+        help="refuse a join whose state step exceeds this many times the largest "
+        "one-frame step that dim ever makes inside an episode (1.0 = physically possible)",
+    )
     args = ap.parse_args()
+
+    merge_tasks = {t.strip() for t in args.merge_tasks.split(",") if t.strip()}
+    if merge_tasks and not args.merge_label:
+        ap.error("--merge-tasks needs --merge-label")
 
     eps = pd.read_parquet(args.src / "meta/episodes/chunk-000/file-000.parquet")
     fps = float(json.loads((args.src / "meta/info.json").read_text())["fps"])
@@ -316,21 +503,58 @@ def main() -> None:
             a, b = sessions[sid]
             val_eps.extend(range(a, b))
     val_set = set(val_eps)
-    train_eps = [i for i in range(n) if i not in val_set]
+
+    mkw = dict(merge_tasks=merge_tasks, merge_label=args.merge_label)
 
     full = args.out
     print(f"[full] {full}  ({n} episodes)")
-    convert(args.src, full, list(range(n)), jobs=args.jobs, crf=args.crf)
-    if not args.no_verify:
-        verify(args.src, full, list(range(n)), args.verify_samples, fps)
+    full_groups = build_groups(
+        args.src,
+        eps,
+        list(range(n)),
+        merge_tasks,
+        -1.0 if args.merge_label_only else args.merge_jump_tol,
+    )
+    reuse = {}
+    if args.link_clips_from is not None:
+        have = sum(1 for _ in open(args.link_clips_from / "meta/episodes.jsonl"))
+        if have != len(full_groups):
+            raise SystemExit(
+                f"--link-clips-from has {have} episodes, this conversion makes "
+                f"{len(full_groups)}: the groupings differ, so the clips do not correspond"
+            )
+        reuse = dict(
+            link_from=args.link_clips_from,
+            link_index={tuple(g): i for i, g in enumerate(full_groups)},
+        )
+    convert(args.src, full, full_groups, jobs=args.jobs, crf=args.crf, **mkw, **reuse)
+    if not args.no_verify and not reuse:
+        verify(args.src, full, full_groups, args.verify_samples, fps)
 
     if val_eps:
-        for name, ids in (("train", train_eps), ("val", val_eps)):
+        # the split must not cut a group in half, so it is taken on whole groups
+        link_index = {tuple(g): i for i, g in enumerate(full_groups)}
+        for name, keep in (
+            ("train", lambda g: g[0] not in val_set),
+            ("val", lambda g: g[0] in val_set),
+        ):
+            sel = [g for g in full_groups if keep(g)]
+            mixed = [g for g in full_groups if any((e in val_set) != (g[0] in val_set) for e in g)]
+            if mixed:
+                raise SystemExit(f"group straddles the train/val split: {mixed}")
             dst = full.with_name(full.name + f"_{name}")
-            print(
-                f"[{name}] {dst}  ({len(ids)} episodes, {int(eps.iloc[ids]['length'].sum())} frames)"
+            frames = int(sum(int(eps["length"].iloc[e]) for g in sel for e in g))
+            print(f"[{name}] {dst}  ({len(sel)} episodes, {frames} frames)")
+            convert(
+                args.src,
+                dst,
+                sel,
+                jobs=args.jobs,
+                crf=args.crf,
+                link_index=link_index,
+                link_from=full,
+                **mkw,
             )
-            convert(args.src, dst, ids, jobs=args.jobs, crf=args.crf, link_from=full)
 
     print("DONE")
 

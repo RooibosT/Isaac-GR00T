@@ -122,7 +122,10 @@ CHUNK_SIZE = 1000
 PIXEL_TOL = 6.0
 
 # state/action width the merged set is cut back to -- everything the older
-# G1_Dex1_IKEA_table_30hz_v2 carries, and nothing past it
+# G1_Dex1_IKEA_table_30hz_v2 carries, and nothing past it. `stage2 --state-dim`
+# raises the state cut to 117 for the torque re-export, whose extra 31 columns
+# sit past 86; the action stays at 19 because the two `arm_tauff` blocks past it
+# are a different action space, not extra observation.
 MERGED_STATE_DIM = 86
 MERGED_ACTION_DIM = 19
 
@@ -405,7 +408,14 @@ def read_v21(path: Path) -> tuple[list[dict], dict, dict]:
 
 
 def stage2(
-    stage1_root: Path, ikea: Path, out: Path, variant: str, seed: int, drop_ikea: bool = False
+    stage1_root: Path,
+    ikea: Path,
+    out: Path,
+    variant: str,
+    seed: int,
+    drop_ikea: bool = False,
+    state_dim: int = MERGED_STATE_DIM,
+    action_dim: int = MERGED_ACTION_DIM,
 ) -> None:
     rng = np.random.default_rng(seed)
 
@@ -435,11 +445,17 @@ def stage2(
     for split in ("train", "val"):
         want = [p for p in plan if p[3] == (split == "val")]
         dst = out.with_name(out.name + f"_{split}")
-        write_merged(want, dst, ikea)
+        write_merged(want, dst, ikea, state_dim, action_dim)
         print(f"[{split}] {dst.name}: {len(want)} episodes")
 
 
-def write_merged(plan: list[tuple[Path, int, str, bool]], dst: Path, ikea: Path) -> None:
+def write_merged(
+    plan: list[tuple[Path, int, str, bool]],
+    dst: Path,
+    ikea: Path,
+    state_dim: int = MERGED_STATE_DIM,
+    action_dim: int = MERGED_ACTION_DIM,
+) -> None:
     if dst.exists():
         shutil.rmtree(dst)
     (dst / "meta").mkdir(parents=True)
@@ -456,8 +472,8 @@ def write_merged(plan: list[tuple[Path, int, str, bool]], dst: Path, ikea: Path)
             d = pd.read_parquet(
                 src / f"data/chunk-{old_i // CHUNK_SIZE:03d}/episode_{old_i:06d}.parquet"
             )
-            S = np.stack(d["observation.state"]).astype(np.float32)[:, :MERGED_STATE_DIM]
-            A = np.stack(d["action"]).astype(np.float32)[:, :MERGED_ACTION_DIM]
+            S = np.stack(d["observation.state"]).astype(np.float32)[:, :state_dim]
+            A = np.stack(d["action"]).astype(np.float32)[:, :action_dim]
             out_df = pd.DataFrame(
                 {
                     "observation.state": list(S),
@@ -502,14 +518,14 @@ def write_merged(plan: list[tuple[Path, int, str, bool]], dst: Path, ikea: Path)
         }
     )
     feats = json.loads(json.dumps(info_i["features"]))
-    feats["observation.state"]["shape"] = [MERGED_STATE_DIM]
-    feats["action"]["shape"] = [MERGED_ACTION_DIM]
+    feats["observation.state"]["shape"] = [state_dim]
+    feats["action"]["shape"] = [action_dim]
     info["features"] = feats
     (dst / "meta/info.json").write_text(json.dumps(info, indent=4))
 
     mod = json.loads(json.dumps(mod_i))
-    mod["state"] = {k: v for k, v in mod["state"].items() if v["end"] <= MERGED_STATE_DIM}
-    mod["action"] = {k: v for k, v in mod["action"].items() if v["end"] <= MERGED_ACTION_DIM}
+    mod["state"] = {k: v for k, v in mod["state"].items() if v["end"] <= state_dim}
+    mod["action"] = {k: v for k, v in mod["action"].items() if v["end"] <= action_dim}
     (dst / "meta/modality.json").write_text(json.dumps(mod, indent=4))
 
 
@@ -541,6 +557,8 @@ def main() -> None:
         help="keep only the new sources; the older set is still read for its layout",
     )
     s2.add_argument("--seed", type=int, default=20260826)
+    s2.add_argument("--state-dim", type=int, default=MERGED_STATE_DIM)
+    s2.add_argument("--action-dim", type=int, default=MERGED_ACTION_DIM)
     args = ap.parse_args()
 
     if args.cmd == "stage1":
@@ -555,7 +573,16 @@ def main() -> None:
                 check_clip_lengths(out)
                 verify(src, out, args.verify_samples)
     else:
-        stage2(args.stage1_root, args.ikea, args.out, args.variant, args.seed, args.drop_ikea)
+        stage2(
+            args.stage1_root,
+            args.ikea,
+            args.out,
+            args.variant,
+            args.seed,
+            args.drop_ikea,
+            args.state_dim,
+            args.action_dim,
+        )
     print("DONE")
 
 
