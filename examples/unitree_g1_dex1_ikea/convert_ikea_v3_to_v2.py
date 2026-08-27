@@ -74,6 +74,31 @@ def video_key(cam: str) -> str:
     return f"observation.images.{cam}"
 
 
+def resolve_file_index(eps: pd.DataFrame, cam: str, n_files: int) -> np.ndarray:
+    """Which physical mp4 each episode is in, derived rather than believed.
+
+    `videos/<key>/file_index` is not trustworthy. The IKEA_pickuptheleg export
+    labels episodes 0-177 of both high cameras with file_index 1, when the first
+    91 of them are physically in file-000 -- each pair of files was collapsed onto
+    the pair's last index. The wrist cameras, which have two files instead of
+    four, came out right, so the damage is silent and partial.
+
+    Timestamps cannot lie the same way: they are positions inside one file, so a
+    reset to 0 is a new file. Numbering the resets recovers the mapping, and the
+    count of resets has to match the count of mp4s on disk or this raises --
+    `verify` then decodes frames through the mapping as the real check.
+    """
+    vk = video_key(cam)
+    ft = eps[f"videos/{vk}/from_timestamp"].to_numpy(dtype=float)
+    starts = np.flatnonzero(ft == 0.0)
+    if len(starts) != n_files:
+        raise SystemExit(
+            f"{cam}: {len(starts)} timestamp resets but {n_files} mp4 files -- "
+            "cannot tell which episode is in which file"
+        )
+    return np.searchsorted(starts, np.arange(len(ft)), side="right") - 1
+
+
 def cut_clip(src: Path, first_frame: int, n_frames: int, dst: Path, fps: float, crf: int) -> None:
     """Write frames [first_frame, first_frame + n_frames) of `src` to `dst`.
 
@@ -149,12 +174,19 @@ def build_groups(
         if b - a > 1:
             within = np.maximum(within, np.abs(np.diff(state[a:b], axis=0)).max(0))
 
+    file_of = {
+        cam: resolve_file_index(
+            eps, cam, len(list((src / f"videos/{video_key(cam)}/chunk-000").glob("file-*.mp4")))
+        )
+        for cam in CAMERAS
+    }
+
     def abuts(k: int, nxt: int) -> bool:
         if hi[k] != lo[nxt]:
             return False
         for cam in CAMERAS:
             vk = video_key(cam)
-            if eps[f"videos/{vk}/file_index"].iloc[k] != eps[f"videos/{vk}/file_index"].iloc[nxt]:
+            if file_of[cam][k] != file_of[cam][nxt]:
                 return False
             gap = abs(
                 float(eps[f"videos/{vk}/to_timestamp"].iloc[k])
@@ -348,6 +380,12 @@ def convert(
     print(f"  data: {len(groups)} episode parquets written")
 
     # ---- video ----
+    file_of = {
+        cam: resolve_file_index(
+            eps, cam, len(list((src / f"videos/{video_key(cam)}/chunk-000").glob("file-*.mp4")))
+        )
+        for cam in CAMERAS
+    }
     tasks: list[tuple] = []
     for new_i, grp in enumerate(groups):
         head = eps.iloc[grp[0]]
@@ -366,7 +404,7 @@ def convert(
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.hardlink_to(srcclip)
                 continue
-            fi = int(head[f"videos/{video_key(cam)}/file_index"])
+            fi = int(file_of[cam][grp[0]])
             t0 = float(head[f"videos/{video_key(cam)}/from_timestamp"])
             f0 = int(round(t0 * fps))
             srcvid = src / f"videos/{video_key(cam)}/chunk-000/file-{fi:03d}.mp4"
@@ -395,6 +433,12 @@ def verify(src: Path, out: Path, groups: list[list[int]], n_samples: int, fps: f
     from torchcodec.decoders import VideoDecoder
 
     eps = pd.read_parquet(src / "meta/episodes/chunk-000/file-000.parquet")
+    file_of = {
+        cam: resolve_file_index(
+            eps, cam, len(list((src / f"videos/{video_key(cam)}/chunk-000").glob("file-*.mp4")))
+        )
+        for cam in CAMERAS
+    }
     rng = np.random.default_rng(0)
     picks = rng.choice(len(groups), size=min(n_samples, len(groups)), replace=False)
     worst = 0.0
@@ -406,7 +450,7 @@ def verify(src: Path, out: Path, groups: list[list[int]], n_samples: int, fps: f
         row = eps.iloc[grp[0]]
         L = int(sum(int(eps["length"].iloc[g]) for g in grp))
         for cam in CAMERAS:
-            fi = int(row[f"videos/{video_key(cam)}/file_index"])
+            fi = int(file_of[cam][grp[0]])
             f0 = int(round(float(row[f"videos/{video_key(cam)}/from_timestamp"]) * fps))
             if (cam, fi) not in sources:
                 sources[(cam, fi)] = VideoDecoder(
