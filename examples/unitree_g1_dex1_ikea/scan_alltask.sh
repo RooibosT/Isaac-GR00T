@@ -56,10 +56,27 @@ declare -A DIRS=(
   [n]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_n/g1_dex1_ikea_relarm_3view_aug_b64_alltask_n"
   [x]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_alltask_x/g1_dex1_ikea_relarm_3view_aug_b64_alltask_x"
   [ctl]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_v2/g1_dex1_ikea_relarm_3view_aug_b64_v2"
+  [p]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_p/g1_dex1_ikea_relarm_3view_aug_b64_pnp_p"
+  [pv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pv/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pv"
+  [pvt]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pvt/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pvt"
+)
+
+# The pick-and-place runs are scored on their own val split, not the unified one.
+# It holds the identical 16,218 frames -- meta/stats.json comes out bit-identical
+# -- but `pick` and `insert` are one task there, so scoring them against the
+# unified val would feed a string they were never trained on. The other three
+# tasks are labelled the same in both splits and stay directly comparable to u/uv.
+# To put u or uv on this split instead, scan_ikea.py --relabel rewrites only the
+# instruction the policy is fed and keeps the val label for grouping.
+declare -A VALS=(
+  [p]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_pnp_val"
+  [pv]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_pnp_val"
+  [pvt]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_pnptq_val"
 )
 # one GPU pair per run, matching how they were trained
 declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1" \
-                 [m16]="0 1" [m30]="2 3" [uv]="4 5" [mv]="6 7" [ctlv]="0 1")
+                 [m16]="0 1" [m30]="2 3" [uv]="4 5" [mv]="6 7" [ctlv]="0 1" \
+                 [p]="0 1" [pv]="2 3" [pvt]="4 5")
 
 # Runs whose config carries arm velocity; the rest use the 46-dim one. Scoring a
 # 60-dim checkpoint against the 46-dim config silently feeds it the wrong state.
@@ -67,6 +84,8 @@ declare -A CFGS=(
   [uv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
   [mv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
   [ctlv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+  [pv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+  [pvt]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_torque_config.py"
 )
 
 
@@ -96,9 +115,10 @@ scan_one() {   # name
         return
     fi
     local LOG="$ROOT/datasets/scan_alltask_$name.log"
-    local GA GB STEPS N HALF A B CFG
+    local GA GB STEPS N HALF A B CFG DSVAL
     read -r GA GB <<< "${GPUS[$name]}"
     CFG="${CFGS[$name]:-$CONFIG}"
+    DSVAL="${VALS[$name]:-$VAL}"
 
     STEPS=$(find "$OUT" -maxdepth 1 -name 'checkpoint-*' -type d -printf '%f\n' \
             | sed 's/checkpoint-//' | sort -n)
@@ -107,14 +127,15 @@ scan_one() {   # name
     HALF=$(( (N + 1) / 2 ))
     A=$(echo "$STEPS" | head -n "$HALF" | paste -sd,)
     B=$(echo "$STEPS" | tail -n +$((HALF + 1)) | paste -sd,)
-    echo "[$(date '+%F %T')] $name: $N ckpts ($(basename "$CFG")) -> GPU $GA [$A] | GPU $GB [$B]" | tee -a "$LOG"
+    echo "[$(date '+%F %T')] $name: $N ckpts ($(basename "$CFG"), $(basename "$DSVAL"))" \
+         "-> GPU $GA [$A] | GPU $GB [$B]" | tee -a "$LOG"
 
     local pair g rest steps tag
     for pair in "$GA:$A:a" "$GB:$B:b"; do
         g=${pair%%:*}; rest=${pair#*:}; steps=${rest%:*}; tag=${rest##*:}
         [ -z "$steps" ] && continue
         CUDA_VISIBLE_DEVICES="$g" python "$ROOT/examples/unitree_g1_dex1_ikea/scan_ikea.py" \
-            --checkpoints-dir "$OUT" --dataset-path "$VAL" --config "$CFG" \
+            --checkpoints-dir "$OUT" --dataset-path "$DSVAL" --config "$CFG" \
             --stride "$STRIDE" --steps "$steps" \
             --output "$OUT/scan_alltask_$tag.json" >> "$LOG" 2>&1 &
     done
