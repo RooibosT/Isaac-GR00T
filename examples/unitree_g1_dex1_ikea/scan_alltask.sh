@@ -60,6 +60,9 @@ declare -A DIRS=(
   [pv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pv/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pv"
   [pvt]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pvt/g1_dex1_ikea_relarm_3view_aug_b64_pnp_pvt"
   [leg]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_leg_armvel/g1_dex1_ikea_relarm_3view_aug_b64_leg_armvel"
+  [rv]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_2h_rv/g1_dex1_ikea_relarm_3view_aug_b64_2h_rv"
+  [r]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_2h_r/g1_dex1_ikea_relarm_3view_aug_b64_2h_r"
+  [r1v]="$ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_2h_r1v/g1_dex1_ikea_relarm_3view_aug_b64_2h_r1v"
 )
 
 # The pick-and-place runs are scored on their own val split, not the unified one.
@@ -77,11 +80,17 @@ declare -A VALS=(
   # measured on the unified val, which holds the same 15 episodes plus the two new
   # tasks -- are the control without needing a re-scan
   [leg]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_leg_30hz_val"
+  # rv and r carry two rotate labels, r1v one, so each is scored on its own split;
+  # the three tasks they share with pnp keep the same strings and stay comparable
+  [rv]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_twohand_val"
+  [r]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_twohand_val"
+  [r1v]="$ROOT/datasets/carroll511/G1_Dex1_IKEA_all_30hz_twohand1_val"
 )
 # one GPU pair per run, matching how they were trained
 declare -A GPUS=([u]="0 1" [s]="2 3" [n]="4 5" [x]="6 7" [ctl]="0 1" \
                  [m16]="0 1" [m30]="2 3" [uv]="4 5" [mv]="6 7" [ctlv]="0 1" \
-                 [p]="0 1" [pv]="2 3" [pvt]="4 5" [leg]="6 7")
+                 [p]="0 1" [pv]="2 3" [pvt]="4 5" [leg]="6 7" \
+                 [rv]="0 1" [r]="2 3" [r1v]="4 5")
 
 # Runs whose config carries arm velocity; the rest use the 46-dim one. Scoring a
 # 60-dim checkpoint against the 46-dim config silently feeds it the wrong state.
@@ -92,6 +101,8 @@ declare -A CFGS=(
   [pv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
   [pvt]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_torque_config.py"
   [leg]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+  [rv]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
+  [r1v]="$ROOT/examples/unitree_g1_dex1_ikea/g1_dex1_ikea_armvel_config.py"
 )
 
 

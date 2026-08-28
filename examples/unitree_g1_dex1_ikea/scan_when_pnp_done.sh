@@ -15,7 +15,7 @@ RUNS="${RUNS:-p pv pvt leg}"
 SCAN="${SCAN:-$RUNS}"
 
 # the leg run lives under a different suffix, so its pattern is built separately
-suffix_of() { case "$1" in leg) echo "leg_armvel";; *) echo "pnp_$1";; esac; }
+suffix_of() { case "$1" in leg) echo "leg_armvel";; rv|r|r1v) echo "2h_$1";; *) echo "pnp_$1";; esac; }
 
 for r in $RUNS; do
     pat="output_dir $ROOT/outputs/g1_dex1_ikea_relarm_3view_aug_b64_$(suffix_of "$r" | sed 's/^\(.\)/[\1]/') "

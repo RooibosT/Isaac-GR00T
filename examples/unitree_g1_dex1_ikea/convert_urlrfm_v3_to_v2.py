@@ -131,16 +131,36 @@ MERGED_ACTION_DIM = 19
 
 # source -> ({variant: task string}, held-out episode count)
 #
-#   unified  one string for all three rotate sets
-#   split    set 2 gets its own string; the only difference from `unified`
-#   renamed  as `unified`, under the natural name, to price the rename by itself
-VARIANTS = ("unified", "split", "renamed")
+#   unified   one string for all three rotate sets
+#   split     set 2 gets its own string; the only difference from `unified`
+#   renamed   as `unified`, under the natural name, to price the rename by itself
+#   twohand   rotatetable1 is replaced by its re-shoot and sets 1 and 3 are dropped
+#   twohand1  as `twohand`, but the two surviving sets share one string
+#
+# The last two exist because `IKEA_rotatetable1_v2` is not more of the same motion.
+# The older three sets are all one-handed -- the right arm's joints move 0.05-0.23
+# rad and its wrist never leaves an 8-17 cm box -- while the re-shoot moves the
+# right arm 0.35-1.24 rad per joint and its wrist 9-11 cm on every axis, at a
+# higher median torque, without ever closing the right gripper. It braces the
+# table with an open hand while the left turns it, and finishes 13% sooner.
+#
+# So the re-shoot cannot be *added* to `IKEA_rotatetable1` under one string: that
+# is two answers to one picture, and the model averages them. It replaces it, and
+# `IKEA_rotatetable3` goes too -- same direction, still one-handed, and the pair
+# that fails on hardware. `twohand1` is the control that prices the instruction
+# split now that the two surviving sets really do differ in technique, which was
+# not true when section 18 measured the split and found it unnecessary.
+#
+# A `None` label drops the source from that variant.
+VARIANTS = ("unified", "split", "renamed", "twohand", "twohand1")
 SOURCES = {
     "IKEA_rotatetable1": (
         {
             "unified": "turn the tabletop square",
             "split": "turn the tabletop square",
             "renamed": "rotate table base",
+            "twohand": None,
+            "twohand1": None,
         },
         4,
     ),
@@ -149,6 +169,8 @@ SOURCES = {
             "unified": "turn the tabletop square",
             "split": "spin the crossbars around",
             "renamed": "rotate table base",
+            "twohand": "spin the crossbars around",
+            "twohand1": "turn the tabletop square",
         },
         4,
     ),
@@ -157,12 +179,33 @@ SOURCES = {
             "unified": "turn the tabletop square",
             "split": "turn the tabletop square",
             "renamed": "rotate table base",
+            "twohand": None,
+            "twohand1": None,
         },
         4,
     ),
     "IKEA_fliptable": (
-        {"unified": "flip table", "split": "flip table", "renamed": "flip table"},
+        {
+            "unified": "flip table",
+            "split": "flip table",
+            "renamed": "flip table",
+            "twohand": "flip table",
+            "twohand1": "flip table",
+        },
         5,
+    ),
+    # last on purpose: the holdout draws come off one rng in this order, so
+    # inserting a source anywhere earlier would silently reshuffle which episodes
+    # the already-built variants held out
+    "IKEA_rotatetable1_v2": (
+        {
+            "unified": None,
+            "split": None,
+            "renamed": None,
+            "twohand": "turn the tabletop square",
+            "twohand1": "turn the tabletop square",
+        },
+        4,
     ),
 }
 
@@ -434,11 +477,19 @@ def stage2(
 
     for name, (labels, n_val) in SOURCES.items():
         src = stage1_root / name
+        if not src.exists():
+            if labels[variant] is not None:
+                raise SystemExit(f"{name} has no stage1 output at {src}")
+            continue
         eps, _, _ = read_v21(src)
         # deterministic per-source holdout; each source is one session, so this is
-        # episode-level rather than the session-level split used for the older set
+        # episode-level rather than the session-level split used for the older set.
+        # The draw happens even for a source this variant drops, so adding a variant
+        # cannot shift which episodes the older variants held out.
         val = set(rng.choice(len(eps), size=n_val, replace=False).tolist())
         label = labels[variant]
+        if label is None:
+            continue
         for e in eps:
             plan.append((src, e["episode_index"], label, e["episode_index"] in val))
 
