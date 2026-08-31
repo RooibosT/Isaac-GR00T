@@ -184,6 +184,13 @@ def main():
     # inputs, which a plain A/B between two runs cannot separate from a general
     # accuracy difference.
     ap.add_argument("--zero-state-keys", nargs="*", default=[])
+    # Which embodiment the --config registers under. Defaults to new_embodiment,
+    # which every IKEA config used until the RAMEN-recipe runs: those register
+    # under REAL_G1 so the projector starts from the pretrained slot 25 instead of
+    # the untouched slot 10 (see g1_dex1_ikea_ramen_config.py). The tag has to
+    # match or MODALITY_CONFIGS has no entry and the scan dies on a KeyError
+    # before loading a single checkpoint.
+    ap.add_argument("--embodiment-tag", default="new_embodiment")
     # Score a model on a val split whose task strings it was never trained on,
     # without feeding it those strings. The val label still does the grouping, so
     # `--relabel "spin the crossbars around=turn the tabletop square"` reports the
@@ -219,8 +226,8 @@ def main():
     sys.path.insert(0, str(args.config.parent))
     importlib.import_module(args.config.stem)
 
-    tag = EmbodimentTag.resolve("new_embodiment")
-    modality = MODALITY_CONFIGS["new_embodiment"]
+    tag = EmbodimentTag.resolve(args.embodiment_tag)
+    modality = MODALITY_CONFIGS[tag.value]
     horizon = len(modality["action"].delta_indices)
     action_keys = modality["action"].modality_keys
 
