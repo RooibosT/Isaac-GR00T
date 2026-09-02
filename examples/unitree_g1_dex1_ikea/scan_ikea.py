@@ -36,6 +36,7 @@ import gc
 import importlib
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import sys
@@ -58,11 +59,25 @@ from gr00t.data.utils import parse_observation_gr00t  # noqa: E402
 from gr00t.policy.gr00t_policy import Gr00tPolicy  # noqa: E402
 
 
-sys.path.insert(0, "/home/chan/IKEA/url_lerobot")
-from url_groot_deploy.g1_kinematics import G1WristKinematics  # noqa: E402
+# The FK used for the wrist-position metric lives in the deploy repo, which sits
+# beside this one rather than being installed. Derived from this file's location
+# so a checkout under a different home still finds it; URL_LEROBOT overrides.
+URL_LEROBOT = Path(
+    os.environ.get("URL_LEROBOT") or Path(__file__).resolve().parents[3] / "url_lerobot"
+)
+if not (URL_LEROBOT / "url_groot_deploy").is_dir():
+    raise SystemExit(
+        f"url_groot_deploy not found under {URL_LEROBOT}; set URL_LEROBOT to the "
+        "url_lerobot checkout"
+    )
+sys.path.insert(0, str(URL_LEROBOT))
+try:  # the deploy repo moved this under common/; older checkouts have it at the top
+    from url_groot_deploy.common.g1_kinematics import G1WristKinematics  # noqa: E402
+except ModuleNotFoundError:
+    from url_groot_deploy.g1_kinematics import G1WristKinematics  # noqa: E402
 
 
-XR_REPO = "/home/chan/IKEA/url_lerobot/xr_teleoperate"
+XR_REPO = str(URL_LEROBOT / "xr_teleoperate")
 FIRST_KS = (5, 8, 16)
 
 

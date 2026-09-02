@@ -10,6 +10,12 @@
 # so a bare match would wait on all three.
 #
 #   bash scan_when_done.sh <experiment_name> <config.py> <gpuA> <gpuB>
+#
+# Env overrides: VAL (val split), STRIDE (window stride, default 10), TAG
+# (embodiment tag, default new_embodiment -- the RAMEN configs register REAL_G1).
+# STRIDE is not free choice when comparing against recorded numbers: the
+# `leg_30hz` control was measured at stride 7 / 994 windows, so a scan meant to
+# sit beside those figures must pass STRIDE=7.
 set -uo pipefail
 
 EXP="$1"; CONFIG="$2"; GPU_A="$3"; GPU_B="$4"
@@ -25,7 +31,7 @@ for g in "$GPU_A" "$GPU_B"; do
         fi
     done
 done
-ROOT="/home/chan/IKEA/Isaac-GR00T"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # HF Trainer nests the run under a second copy of the experiment name.
 OUT="$ROOT/outputs/$EXP/$EXP"
 # The waist-aligned runs emit 19 dims and must be scored on the matching
@@ -35,7 +41,19 @@ VAL="${VAL:-$ROOT/datasets/carroll511/G1_Dex1_IKEA_table_30hz_val}"
 LOG="$ROOT/datasets/scan_${EXP}.log"
 
 cd "$ROOT"
-export LD_LIBRARY_PATH="$HOME/micromamba/envs/ffmpeg7/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# torchcodec wants the ffmpeg 7 libs where they exist; a system ffmpeg 6 also
+# decodes these clips, so this is added only if the env is actually installed.
+if [ -d "$HOME/micromamba/envs/ffmpeg7/lib" ]; then
+    export LD_LIBRARY_PATH="$HOME/micromamba/envs/ffmpeg7/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# EXPERIMENTS.md section 18: without this the scan grabs 331 threads per process
+# and takes 59 min per checkpoint instead of 5.9 -- the FK call is the hot path,
+# 80 per window. The training launcher always set it; only the scan path missed it.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export MKL_NUM_THREADS="$OMP_NUM_THREADS"
+export OPENBLAS_NUM_THREADS="$OMP_NUM_THREADS"
+export NUMEXPR_NUM_THREADS="$OMP_NUM_THREADS"
 
 echo "[$(date '+%F %T')] waiting for $EXP ..." | tee -a "$LOG"
 while pgrep -f "output_dir $ROOT/outputs/$EXP " > /dev/null 2>&1; do sleep 60; done
@@ -55,7 +73,8 @@ for pair in "$GPU_A:$A:a" "$GPU_B:$B:b"; do
     [ -z "$steps" ] && continue
     CUDA_VISIBLE_DEVICES="$g" python "$ROOT/examples/unitree_g1_dex1_ikea/scan_ikea.py" \
         --checkpoints-dir "$OUT" --dataset-path "$VAL" --config "$CONFIG" \
-        --stride 10 --steps "$steps" \
+        --embodiment-tag "${TAG:-new_embodiment}" \
+        --stride "${STRIDE:-10}" --steps "$steps" \
         --output "$OUT/scan_$tagname.json" >> "$LOG" 2>&1 &
 done
 wait
