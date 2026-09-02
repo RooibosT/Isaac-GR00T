@@ -112,6 +112,30 @@ mkdir -p "$OUTPUT_DIR"
 # still writes the full 3.14B-param model each time, so a 20k/2k run needs
 # ~120 GB on its own; several concurrent runs fill a disk quietly and the first
 # symptom is a SafetensorError mid-save that kills the run outright, hours in.
+# Checkpoint rotation is OFF by default (0 = HF keeps every checkpoint), and the
+# disk preflight below already demands room for all of them, so this is what the
+# script was implicitly promising anyway.
+#
+# It is off because rotation deleted the wrong checkpoints on this host. The
+# leg_armvel run (40k/2k, limit 10) should have kept 22000-40000; it kept
+# 4000, 6000, 8000 and 28000-40000 -- exactly the tail of a *lexicographic* sort
+# ("4000" > "38000" as strings). HF sorts (mtime, path) tuples, and every
+# checkpoint directory on this CephFS volume reports the same mtime (the run's
+# start time; the files inside are timestamped correctly), so the sort falls
+# through to the path string. There is a guard in transformers for exactly this
+# -- fall back to numerical ordering when the mtime spread is under a second --
+# and it did not save this run.
+#
+# Freshly created directories on the same volume do get distinct mtimes, so a
+# launch-time probe cannot predict it. Keeping everything and pruning by hand
+# after the scan is the version that cannot silently lose the checkpoints the
+# comparison needs. Set SAVE_TOTAL_LIMIT to a positive number to rotate anyway.
+SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-0}"
+if [ "$SAVE_TOTAL_LIMIT" -gt 0 ]; then
+    echo "WARNING: SAVE_TOTAL_LIMIT=$SAVE_TOTAL_LIMIT -- rotation has deleted the wrong" >&2
+    echo "         checkpoints on this filesystem; verify what survives before scanning." >&2
+fi
+
 CKPT_GB="${CKPT_GB:-12}"
 NEED_GB=$(( (MAX_STEPS / SAVE_STEPS + 1) * CKPT_GB ))
 FREE_GB=$(df -BG --output=avail "$REPO_ROOT" | tail -1 | tr -dc '0-9')
@@ -147,7 +171,7 @@ env \
     --experiment-name "$EXP_NAME" \
     --output-dir "$OUTPUT_DIR" \
     --save-only-model \
-    -- --save-total-limit "${SAVE_TOTAL_LIMIT:-20}" --gradient-accumulation-steps "$GRAD_ACCUM" \
+    -- --save-total-limit "$SAVE_TOTAL_LIMIT" --gradient-accumulation-steps "$GRAD_ACCUM" \
     --val-dataset-path "$VAL_DATASET" --eval-steps "${EVAL_STEPS:-2000}" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
     2>&1 | tee "$OUTPUT_DIR/train.log"
