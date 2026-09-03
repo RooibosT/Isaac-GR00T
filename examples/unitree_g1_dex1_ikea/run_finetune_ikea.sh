@@ -46,35 +46,49 @@ BASE_MODEL_PATH="${BASE_MODEL_PATH:-$REPO_ROOT/models/GR00T-N1.7-3B}"
 TRAIN_DATASET="${DATASET_ROOT}_train"
 VAL_DATASET="${DATASET_ROOT}_val"
 
-# effective batch 64 = global 16 (8/GPU on 2 GPUs) x accum 4.
+# effective batch 64 = global 64 (32/GPU on 2 GPUs) x accum 1.
 #
-# 2 GPUs, not 4. At a *fixed* effective batch more GPUs do not add work per
-# optimizer step, they only split the same 64 samples further, while the
-# 1.62B-param gradient all-reduce stays once per step and gets more expensive
-# with more peers — this host has no NVLink, so it rides PCIe/SYS. Measured
-# here at effective batch 64, 30 steps each (s/step, steady state):
+# The split is a speed choice only: every variant below trains on the same 64
+# samples per optimizer step, so none of them changes what the model learns.
+# Measured on the H100 host at effective batch 64, 1000 steps each, s/step over
+# steps 200-1000 (a 200-step window is not enough -- micro 16 reads 0.588 there
+# and 0.650 sustained):
 #
-#   1 GPU  micro 8  x accum 8              2.46
-#   2 GPU  global 16 x accum 4             1.55   + --ddp-comm-bf16 -> 1.46  <-- best
-#   4 GPU  global 32 x accum 2             3.98   + --ddp-comm-bf16 -> 2.24
+#   1 GPU  micro 8  x accum 8   w12                 1.375
+#   2 GPU  micro 8  x accum 4   w12  bf16comm       0.787   <- the old default
+#   2 GPU  micro 8  x accum 4   w12  no compression 0.787
+#   2 GPU  micro 16 x accum 2   w24  bf16comm       0.650
+#   2 GPU  micro 32 x accum 1   w24  bf16comm       0.541
+#   2 GPU  micro 32 x accum 1   w12  bf16comm       0.486   <- 1.62x, this default
 #
-# bf16 gradient compression halves all-reduce traffic and is worth 6% at 2 GPUs
-# but 44% at 4 — confirming communication, not compute, is the limit. Cutting
-# dataloader workers 16 -> 8 changed the 4-GPU number by 0.03 s, so it is not
-# CPU contention. Always pass `--use-ddp --ddp-comm-bf16`.
+# Bigger micro-batches are nearly free in memory: 8 -> 32 moved the peak from
+# 48.2 to 51.7 GB of 80, because the 3.14B model's optimizer state dominates and
+# the activations do not. 32/GPU is the end of this lever at effective batch 64.
 #
-# The spare GPUs are better spent on parallel ablations (3 concurrent 2-GPU runs
-# on 0-1 / 2-3 / 4-5) than on widening one run; drop DATALOADER_NUM_WORKERS to
-# ~10 in that case, 96 cores are shared.
+# Fewer dataloader workers, not more. Per-100-step timings at micro 32:
+#   w24  2.29 0.60 0.48 0.48 0.48 0.48 0.48 0.76 0.69 0.48
+#   w12  1.24 0.49 0.48 0.48 0.50 0.48 0.48 0.50 0.49 0.48
+# The compute rate is identical; w24 stalls because each worker fills its own
+# 1024-window shard, so more workers means more refills competing. Pushing to 48
+# workers made the first batch take over six minutes.
 #
-# Per-GPU micro-batch stays at 8, the shape the BCT runs fit in 80 GB with three
-# 480x640 video streams.
+# `--ddp-comm-bf16` is a no-op on this host -- 0.787 with and without, to three
+# decimals -- and costs 3.1 GB. It is kept in the launch line because it is what
+# the A100 host needs; harmless here.
+#
+# On the A100 host (no NVLink, PCIe/SYS) the picture was different, and section 3
+# of EXPERIMENTS.md still describes it: 2 GPU 1.55, with bf16 compression 1.46,
+# and 4 GPU *slower* than 2 at 2.24. Those numbers were taken over 30 steps, so
+# by the measurement above they are probably optimistic. On this host 1 GPU is
+# 0.573x of 2 GPU -- 87% scaling efficiency -- so the "spare GPUs are better
+# spent on parallel ablations" conclusion has not been re-tested here and should
+# not be assumed.
 NUM_GPUS="${NUM_GPUS:-2}"
-GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-16}"
-GRAD_ACCUM="${GRAD_ACCUM:-4}"
+GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-64}"
+GRAD_ACCUM="${GRAD_ACCUM:-1}"
 MAX_STEPS="${MAX_STEPS:-20000}"          # 931 steps/epoch -> ~21.5 epochs
 SAVE_STEPS="${SAVE_STEPS:-2000}"
-NUM_WORKERS="${DATALOADER_NUM_WORKERS:-16}"
+NUM_WORKERS="${DATALOADER_NUM_WORKERS:-12}"
 STATE_DROPOUT="${STATE_DROPOUT:-0.2}"
 # The repo default, never validated on a precision task. Measured on this
 # dataset against the frozen Cosmos-Reason2 encoder: this setting alone moves

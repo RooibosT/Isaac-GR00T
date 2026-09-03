@@ -24,12 +24,22 @@ Measurements, rejected ablations and the reasoning behind every setting are in
 
 ## Setup
 
-`torchcodec` needs FFmpeg 7 shared libraries, which the venv does not ship. The
+`torchcodec` needs FFmpeg shared libraries, which the venv does not ship. The
 launcher adds them if `~/micromamba/envs/ffmpeg7` exists; for standalone scripts:
 
 ```bash
 export LD_LIBRARY_PATH="$HOME/micromamba/envs/ffmpeg7/lib:$LD_LIBRARY_PATH"
 source .venv/bin/activate
+```
+
+Where that env does not exist, the system FFmpeg 6 decodes these clips fine — but
+it has to actually be installed. On the containerised H100 host it lives outside
+the persistent volume and disappears when the pod is recreated; the symptom is a
+run that dies seconds after launch with `Could not load libtorchcodec`. Restore
+it with `apt-get install -y ffmpeg` and check before a long run:
+
+```bash
+ffmpeg -version | head -1
 ```
 
 ## 1. Get and convert the dataset
@@ -72,14 +82,19 @@ CUDA_VISIBLE_DEVICES=0,1 \
   bash examples/unitree_g1_dex1_ikea/run_finetune_ikea.sh --use-ddp --ddp-comm-bf16
 ```
 
-Defaults: 2 GPUs, effective batch 64 (global 16 × accum 4), 20,000 steps,
-checkpoint every 2,000. ~8 h on 2× A100.
+Defaults: 2 GPUs, effective batch 64 (global 64 × accum 1), 20,000 steps,
+checkpoint every 2,000, no checkpoint rotation. ~2.7 h on 2× H100.
 
-**Two GPUs, not four, and always `--ddp-comm-bf16`.** At a fixed effective batch
-more ranks only split the same 64 samples further while the gradient all-reduce
-stays once per step; measured 1 GPU 2.46 / 2 GPU 1.46 / 4 GPU 2.24 s/step on this
-NVLink-less host. Spare GPUs are better spent on parallel ablations — three
-concurrent 2-GPU runs showed no slowdown.
+**The batch split is a speed choice, not a recipe choice** — every variant trains
+on the same 64 samples per optimizer step. On the H100 host, 32/GPU with no
+accumulation and 12 dataloader workers runs at 0.486 s/step against 0.787 for the
+old 8/GPU × accum 4, a 1.62× speedup, and peaks at 51.7 GB of 80. More workers
+are *worse* (w24 0.541), because each one fills its own 1024-window shard.
+
+**`--ddp-comm-bf16` does nothing on an NVLink host** (0.787 either way) but is
+what the A100 host needs, so the launcher still passes it. Section 3 of
+EXPERIMENTS.md — 2 GPUs beating 4, compression worth 6% — describes that host and
+has not been re-tested here.
 
 Useful overrides:
 
