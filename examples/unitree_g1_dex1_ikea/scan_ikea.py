@@ -138,35 +138,51 @@ def eval_checkpoint(policy, windows, action_keys, horizon, kin):
             idx = {
                 "arm": [d for k in action_keys if k.endswith("_arm") for d in dims[k]],
                 "grip": [d for k in action_keys if "gripper" in k for d in dims[k]],
+                # xyz+rot6d wrist blocks; only the first three of each are position
+                "eef_xyz": [dims[k][:3] for k in action_keys if k.endswith("_eef_9d")],
             }
         err = pred - gt
-        arm_h = np.abs(err[:, idx["arm"]]).mean(axis=1)
+        # A config that commands the wrist pose has no joint block, so there is no
+        # arm angle to report; the wrist error is then read straight off the
+        # prediction instead of being reached through FK. It is the same quantity
+        # in the same frame either way, so ee_mm stays comparable across configs.
+        joint_arm = bool(idx["arm"])
+        arm_h = np.abs(err[:, idx["arm"]]).mean(axis=1) if joint_arm else None
 
-        # EE space: FK both the prediction and the ground truth, compare the wrists
         zero = np.zeros(3)
         ee_h = np.zeros(horizon)
-        for t in range(horizon):
-            pl, pr = kin.both_wrist_poses(pred[t, idx["arm"]], zero)
-            gl, gr = kin.both_wrist_poses(gt[t, idx["arm"]], zero)
-            ee_h[t] = 0.5 * (np.linalg.norm(pl[:3] - gl[:3]) + np.linalg.norm(pr[:3] - gr[:3]))
-        # how far the wrists actually travel over the chunk — the scale for ee_h
-        g0l, g0r = kin.both_wrist_poses(gt[0, idx["arm"]], zero)
-        gTl, gTr = kin.both_wrist_poses(gt[-1, idx["arm"]], zero)
-        travel = 0.5 * (np.linalg.norm(gTl[:3] - g0l[:3]) + np.linalg.norm(gTr[:3] - g0r[:3]))
+        if joint_arm:
+            for t in range(horizon):
+                pl, pr = kin.both_wrist_poses(pred[t, idx["arm"]], zero)
+                gl, gr = kin.both_wrist_poses(gt[t, idx["arm"]], zero)
+                ee_h[t] = 0.5 * (np.linalg.norm(pl[:3] - gl[:3]) + np.linalg.norm(pr[:3] - gr[:3]))
+            # how far the wrists actually travel over the chunk — the scale for ee_h
+            g0l, g0r = kin.both_wrist_poses(gt[0, idx["arm"]], zero)
+            gTl, gTr = kin.both_wrist_poses(gt[-1, idx["arm"]], zero)
+            travel = 0.5 * (np.linalg.norm(gTl[:3] - g0l[:3]) + np.linalg.norm(gTr[:3] - g0r[:3]))
+        else:
+            xyz = idx["eef_xyz"]
+            assert xyz, "action has neither a joint arm block nor a *_eef_9d block"
+            for t in range(horizon):
+                ee_h[t] = float(np.mean([np.linalg.norm(pred[t, c] - gt[t, c]) for c in xyz]))
+            travel = float(np.mean([np.linalg.norm(gt[-1, c] - gt[0, c]) for c in xyz]))
 
         rec = {
             "mse": float(np.mean(err**2)),
-            "mae_arm": float(arm_h.mean()),
             "mae_grip": float(np.abs(err[:, idx["grip"]]).mean()),
             "ee_mm": float(ee_h.mean() * 1000),
             "ee_travel_mm": float(travel * 1000),
         }
+        if joint_arm:
+            rec["mae_arm"] = float(arm_h.mean())
         for k in FIRST_KS:
-            rec[f"mae_arm_first{k}"] = float(arm_h[:k].mean())
+            if joint_arm:
+                rec[f"mae_arm_first{k}"] = float(arm_h[:k].mean())
             rec[f"ee_mm_first{k}"] = float(ee_h[:k].mean() * 1000)
         acc.setdefault(task, []).append(rec)
         acc.setdefault("__all__", []).append(rec)
-        per_h_arm += arm_h
+        if joint_arm:
+            per_h_arm += arm_h
         per_h_ee += ee_h
         n += 1
 
@@ -174,10 +190,9 @@ def eval_checkpoint(policy, windows, action_keys, horizon, kin):
         return {k: float(np.mean([r[k] for r in rs])) for k in rs[0]} | {"n": len(rs)}
 
     out = {t: agg(rs) for t, rs in acc.items()}
-    out["__per_horizon__"] = {
-        "arm_deg": list(np.degrees(per_h_arm / n)),
-        "ee_mm": list(per_h_ee / n * 1000),
-    }
+    out["__per_horizon__"] = {"ee_mm": list(per_h_ee / n * 1000)}
+    if per_h_arm.any():
+        out["__per_horizon__"]["arm_deg"] = list(np.degrees(per_h_arm / n))
     return out
 
 
@@ -282,11 +297,12 @@ def main():
         gc.collect()
         torch.cuda.empty_cache()
         a = results[ck.name]["__all__"]
+        arm = f"arm {np.degrees(a['mae_arm']):.3f} deg  " if "mae_arm" in a else ""
         logging.info(
-            "%s  mse %.5f  arm %.3f deg  ee %.2f mm  grip %.4f  (%.1f min)",
+            "%s  mse %.5f  %see %.2f mm  grip %.4f  (%.1f min)",
             ck.name,
             a["mse"],
-            np.degrees(a["mae_arm"]),
+            arm,
             a["ee_mm"],
             a["mae_grip"],
             (time.time() - t0) / 60,
