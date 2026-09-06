@@ -96,8 +96,12 @@ Grippers are ABSOLUTE in every config in this family, so only the arms differ.
 
     Inference note: like every armvel model, this one must be fed real `arm_dq`.
     Feeding zeros is worse than the 46-dim baseline over the execution window
-    (section 16), and `url_groot_deploy/observation.py` still has no 60-dim
-    ObservationSpec.
+    (section 16). The 60-dim deployment contract already exists --
+    `url_groot_deploy`'s `ikea_armvel` (`IKEA_ARMVEL_SPEC`, `_ikea_armvel_state`)
+    builds it from `rt/lowstate`, where the motors report position and velocity
+    in the same message. What this checkpoint still needs is a profile: the
+    contract keys the instruction vocabulary too, and `dex1_ikea_armvel.env`
+    carries the five per-subtask strings rather than the one stage-1 sentence.
 """
 
 from gr00t.configs.data.embodiment_configs import register_modality_config

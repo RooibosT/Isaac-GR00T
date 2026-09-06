@@ -397,7 +397,7 @@ C1(BCT init)이 그리퍼 −6%로 대안이나, EE8 +0.8% 때문에 실기 검�
 | `insert` 에피소드 추가 취득 | **미실시 — 간섭·노출을 동시에 다루는 유일한 수단** |
 | mix_ratio 가중 + armvel 4런 | **진행 중 — §19.** 2026-08-26 21:31 기동 |
 | C1 vs baseline 실기 검증 (그리퍼 −6% vs EE8 +0.8%) | **미실시 — 지표로는 결정 불가** |
-| **`url_groot_deploy/observation.py`에 60차원 `ObservationSpec`** | **미실시 — 최종 모델(armvel) 배포의 유일한 차단 요인.** 46차원 `IKEA_SPEC`만 있음. `arm_dq`는 `robot_state.py`가 이미 모터에서 읽는 중 |
+| ~~`url_groot_deploy/observation.py`에 60차원 `ObservationSpec`~~ | **완료 — `ba21b3c` (2026-08-30).** `IKEA_ARMVEL_SPEC` / `_ikea_armvel_state`, 프로필 `dex1_ikea_armvel.env`. `ikea_2h`·`ikea_2h_split`·`ikea_leg` 도 같은 빌더를 쓴다 |
 | 배포 경로: joint 출력 → FK → EE 포즈 | 대회 `decoupled` 레인이 EE 인터페이스 (§11) |
 | 그리퍼 규약 매핑 (0~5.4 → −1..+1 2관절) | 미실시 |
 | VLM 튜닝 (`tune_visual` / `tune_top_llm_layers`) | 권하지 않음 — 5번 지터 측정이 간접 반증 |
@@ -846,6 +846,10 @@ REL joint의 강점이 "예측이 현재 상태에 앵커된다"는 구조적 �
 `url_groot_deploy/observation.py`에 60차원 `ObservationSpec`을 추가하는 것뿐이다
 (현재 46차원 `IKEA_SPEC`만 있음).
 
+> **2026-09-06 정정: 이 작업은 끝났다.** `ba21b3c`(2026-08-30)이 `IKEA_ARMVEL_SPEC`
+> (`_ikea_armvel_state`)과 프로필 `dex1_ikea_armvel.env`를 넣었다. 아래 §12·§27 에
+> 남아 있는 "아직 없다" 서술도 같은 이유로 낡았다.
+
 ---
 
 ## 17. rotate table / flip table 추가 — 라벨 실험 준비 (2026-08-26)
@@ -1148,6 +1152,7 @@ U와 X가 새 태스크에서 동등하지만 U는 다섯 태스크를 전부 �
 
 **속도를 뺀 덕에 `url_groot_deploy`의 기존 46차원 `IKEA_SPEC`이 그대로 맞는다.**
 §10의 "60차원 `ObservationSpec` 추가"는 armvel 버전을 배포할 때만 필요하다.
+(그 작업은 `ba21b3c`, 2026-08-30 에 끝났다.)
 
 ### 운영 메모 — 스캔이 10배 느렸던 이유
 
@@ -1847,8 +1852,9 @@ REL 두 런은 **35,000까지도 미세하게 개선 중**이었다(34k→35k에
 | `gr00t-n1.7-g1-dex1-ikea-stage1-absarm-30hz-h40` | `..._stage1_absarm` / 35000 | 2.261 / 15.48 |
 
 > ⚠️ armvel 모델은 추론 시 `arm_dq`를 반드시 넣어야 한다. 0을 먹이면 실행창에서 46차원
-> baseline보다도 나빠진다(§16). `url_groot_deploy/observation.py`에 60차원 `ObservationSpec`
-> 추가가 남은 작업이다.
+> baseline보다도 나빠진다(§16). ~~`url_groot_deploy/observation.py`에 60차원
+> `ObservationSpec` 추가가 남은 작업이다.~~ → **이미 있다**: `IKEA_ARMVEL_SPEC`
+> (`ba21b3c`, 2026-08-30).
 
 ### 변환 메모 — `stage1_one`을 그대로 쓰면 안 된다
 
@@ -1945,14 +1951,23 @@ arm8° 최저는 **checkpoint-24000 에서 2.139**, 35000 은 2.151 이다(차�
   반대로 나온다는 관찰이 있고, 이 스캔은 그 관찰에 대해 아무 말도 하지 않는다. 열 간 비교는
   여전히 보류다.
 * **비용:** 60 차원 모델은 추론 시 실제 `arm_dq` 가 필요하다. 0 을 먹이면 46 차원보다도
-  나빠진다(§16). `url_groot_deploy/observation.py` 에 60 차원 `ObservationSpec` 이 아직
-  없다. arm8 5% 를 위해 배포 경로를 하나 더 만드는 것이 맞는지는 실기 성공률을 채점한
-  뒤에 판단하는 것이 옳다.
+  나빠진다(§16). **텐서 쪽 배포 경로는 이미 있다** — `url_groot_deploy` 의 `ikea_armvel`
+  계약(`IKEA_ARMVEL_SPEC` / `_ikea_armvel_state`, `ba21b3c` 2026-08-30)이 `rt/lowstate`
+  에서 60 차원을 만든다. 모터가 위치와 속도를 같은 메시지로 주므로 새로 구독할 것도 없다.
+  남은 것은 **프로필뿐**이다: 계약이 지시문 어휘까지 키하는데 `dex1_ikea_armvel.env` 는
+  서브태스크 5문장을 들고 있고, 이 체크포인트는 stage1 한 문장으로 학습됐다.
 
-### 로컬
+### 로컬 / 허브
 
 `outputs/g1_dex1_ikea_relarm_3view_aug_b64_stage1_absarm_armvel` / 18 체크포인트,
-스캔 `scan.json`. 학습 4:58:55 (H100 2 장, 1.95 it/s). 허브 업로드는 아직 안 했다.
+스캔 `scan.json`. 학습 4:58:55 (H100 2 장, 1.95 it/s).
+
+허브: **`RooibosT/gr00t-n1.7-g1-dex1-ikea-stage1-absarm-armvel-30hz-h40`** (private,
+checkpoint-35000, 12.58 GB). §27 형제 세 레포와 같은 파일 구성이다.
+
+> ⚠️ 이 네임스페이스는 **RooibosT 토큰이 있어야** 읽고 쓸 수 있다. 호스트에 저장된 기본
+> 토큰은 `carroll511` 이고 그 토큰으로는 RooibosT 가 404 로 보인다 (`URL-RFM` 과
+> `carroll511` 만 쓸 수 있다). §27·§28 모델을 받으려면 토큰을 바꿔야 한다.
 
 ## 28. IROS stage2 — armvel 이득이 세 번째로 재현된다 ✅ 확정 (2026-09-06)
 
