@@ -51,24 +51,38 @@ that happens, and they are not exclusive:
     still cross the thresholds that matter more often.
 
 This run therefore is not an ablation looking for the best corner of the 2x2.
-It adds arm velocity to the representation that deploys better, and the useful
-question is whether the -16.3% arm8 / -11.1% EE8 that velocity bought under
-RELATIVE targets (section 27, reproducing section 16 on different data) also
-appears under ABSOLUTE ones. Velocity is first-order information and the
-relative/absolute choice is a zeroth-order anchoring choice, so the two should
-be close to independent and the gain should carry over roughly intact.
+It adds arm velocity to the representation that deploys better, and the question
+is whether the -16.3% arm8 / -11.1% EE8 that velocity bought under RELATIVE
+targets carries over to ABSOLUTE ones.
 
-Two things to watch, both of which would mean the transfer is not clean:
+MEASURED (section 28, checkpoint-35000): it carries over, but at about a third
+of the size. arm8 2.261 -> 2.151 (-4.9%) and EE8 15.48 -> 14.69 (-5.1%), against
+-16.3% / -11.1% in the relative column. The prediction written here before the
+run -- that velocity is first-order, the relative/absolute choice is zeroth-order
+anchoring, so the two are near-independent and the gain transfers roughly intact
+-- was wrong, and wrong in absolute terms too: arm8 improves by 0.224 deg under
+relative targets and only 0.110 deg here.
 
-  * If ABS+armvel *closes* most of the open-loop gap to REL, then what the
-    relative parameterization was contributing is rate information it leaks
-    implicitly, and section 16's and section 27's readings both need revising.
-  * If the gripper degrades, the visual pathway got weaker -- gripper timing
-    cannot be extrapolated from joint velocity, so that is the clean signal.
-    Section 16 is the reason to judge an armvel run on the late chunk steps and
-    the gripper rather than on first-8 arm error: constant-velocity
-    extrapolation alone already predicts the first 8 steps to 1.49 deg on this
-    family of data, so a first-8 improvement partly measures the shortcut.
+The per-horizon breakdown says why. At chunk step 0 velocity buys -16.7% under
+relative targets and -1.3% here; by step 39 the two agree at about -2%. Velocity
+is information about the *delta*, and only the relative parameterization makes
+the delta the thing being predicted -- its step-0 target is essentially velocity
+times dt. Under absolute targets the delta is buried inside a full pose
+regression whose dominant error term velocity says nothing about.
+
+That dominant term is visible directly: the absolute model's step-0 arm error is
+1.869 deg, twice the relative model's 0.903 deg, on the one step where the answer
+is the pose it already has in its own state vector. Section 27 assumed absolute
+targets spend capacity re-deriving the observed pose; that number is the
+assumption made measurable.
+
+The gripper did not regress (-1.5%), so by section 16's criterion the visual
+pathway is intact. And arm8 bottoms out at checkpoint-24000 (2.139) rather than
+35000 (2.151), earlier than the 28k section 27 recorded for absolute targets, so
+35,000 steps is wasted on this branch.
+
+What this settles: if the deployed policy is absolute, include arm velocity.
+What it does not settle: whether the deployed policy should be absolute.
 
 Whatever this run scores, the open-loop scan has lost its standing as the
 deployment proxy until the ABS-vs-REL success rates are measured properly. That
