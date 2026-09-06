@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -63,8 +64,19 @@ import pandas as pd
 from scipy.spatial.transform import Rotation
 
 
-DEPLOY_DIR = "/home/chan/IKEA/url_lerobot/url_groot_deploy"
-XR_REPO_DIR = "/home/chan/IKEA/url_lerobot/xr_teleoperate"
+# The FK lives in the deploy repo, which sits beside this one rather than being
+# installed. Derived from this file's location so a checkout under a different
+# home still finds it; URL_LEROBOT overrides. Same resolution as scan_ikea.py.
+URL_LEROBOT = Path(
+    os.environ.get("URL_LEROBOT") or Path(__file__).resolve().parents[3] / "url_lerobot"
+)
+if not (URL_LEROBOT / "url_groot_deploy").is_dir():
+    raise SystemExit(
+        f"url_groot_deploy not found under {URL_LEROBOT}; set URL_LEROBOT to the "
+        "url_lerobot checkout"
+    )
+DEPLOY_DIR = str(URL_LEROBOT / "url_groot_deploy")
+XR_REPO_DIR = str(URL_LEROBOT / "xr_teleoperate")
 
 # 덧붙일 블록. state/action 양쪽에 같은 이름·같은 폭으로 들어간다.
 #
@@ -80,8 +92,14 @@ EEF_BLOCKS = [("left_wrist_eef_9d", 9), ("right_wrist_eef_9d", 9)]
 
 
 def _load_fk():
+    # the deploy repo moved g1_kinematics under common/; older checkouts have it
+    # at the top of url_groot_deploy itself
     sys.path.insert(0, DEPLOY_DIR)
-    from g1_kinematics import G1WristKinematics
+    sys.path.insert(0, str(URL_LEROBOT))
+    try:
+        from url_groot_deploy.common.g1_kinematics import G1WristKinematics
+    except ModuleNotFoundError:
+        from g1_kinematics import G1WristKinematics
 
     return G1WristKinematics(XR_REPO_DIR, waist_zero=True)
 
