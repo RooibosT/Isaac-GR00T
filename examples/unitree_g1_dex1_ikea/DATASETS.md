@@ -111,6 +111,67 @@ rotate·flip 은 소스마다 세션이 하나뿐이라 **에피소드 단위** 
 > 15 fps 원본 3 개 (`subtask_ee`, `subtask_ee_v3.0`, `subtask_joint`, 합 36 GB) 는
 > 2026-08-29 에 삭제했다. 30 Hz 변환본이 있고 그 이후 실험은 전부 30 Hz 기준이다.
 
+## 5. IROS stage1 / stage2 — 42 GB
+
+> 위 **2 절의 "stage1"과 다른 것이다.** 저기서는 rotate·flip 변환 파이프라인의 1 단계
+> 산출물을 가리키고, 여기서는 IROS 챌린지의 과제 단계(첫 다리 / 두 번째 다리)를 가리킨다.
+
+맨 위 헤더의 2026-08-30 스냅샷 이후에 들어온 것이라 그 68 개 / 75 GB 에는 안 들어 있다.
+`/root/02_hub/datasets/` 에 있고 허브 원본은 전부 `RooibosT` private — **`carroll511` 토큰으로는
+404 로 보인다**, 받으려면 RooibosT 토큰으로 로그인해야 한다.
+
+IROS 챌린지 녹화라 위 IKEA 세트와 성격이 다르다. 서브태스크 경계가 없다 — pick → insert →
+rotate 전 구간이 지시 문자열 하나에 들어가고, 그래서 에피소드가 평균 1,300 프레임(43 초)대로
+길다.
+
+### 허브 원본 v3.0
+
+| 데이터셋 | eps | frames | state/act | 크기 | 지시 |
+|---|---:|---:|---|---:|---|
+| `RooibosT/IKEA-pick-leg-stage1` | 127 | 169,171 | 117/33 | 5.3 GB | `stage1: assemble the first leg on the table base` |
+| ⭐ `RooibosT/IKEA-pick-leg-stage1_v2` | **172** | **233,598** | 117/33 | 7.3 GB | 같은 지시. stage1 + 신규 45 개 |
+| `RooibosT/IKEA-pick-leg-stage2` | 114 | 159,566 | 117/33 | 5.1 GB | `stage2: rotate the table base and assemble the second leg.` |
+
+**`_v2` 는 stage1 의 상위집합이고, 신규분이 뒤가 아니라 앞에 붙어 있다.** 뒤쪽 127 개가
+stage1 의 127 개와 state·action 비트 동일(max |diff| 0.0)이므로 v1 인덱스 `i` 는 v2 의
+`i + 45` 이고, 신규 45 개가 0–44 를 차지한다. 새 export 를 받을 때마다 확인할 것 — 뒤에
+붙었다고 가정하면 분할이 통째로 어긋난다.
+
+### v2.1 변환본
+
+| 데이터셋 | eps | frames | state/act | 크기 |
+|---|---:|---:|---|---:|
+| `IKEA_pick_leg_stage1` — `_train` 117 / 157,663 · `_val` 10 / 11,508 | 127 | 169,171 | 117/33 | 6.9 GB |
+| ⭐ `IKEA_pick_leg_stage1_v2` — `_train` **162 / 222,090** · `_val` 10 / 11,508 | 172 | 233,598 | 117/33 | 9.5 GB |
+| `IKEA_pick_leg_stage2` — `_train` 104 / 148,069 · `_val` 10 / 11,497 | 114 | 159,566 | 117/33 | 6.7 GB |
+| `IKEA_pick_leg_stage1_eef_{train,val}` | | | **135/51** | action 에 EEF 추가 |
+| `IKEA_pick_leg_stage1_pi05_{train,val}` | | | **46/16** | π0.5 라인 |
+
+변환기는 `/root/02_hub/datasets/convert_stage1_v3_to_v2.py` 다. `convert_urlrfm_v3_to_v2.py` 를
+쓰면 안 된다 — 데이터 parquet 1 개 / 카메라당 mp4 1 개를 가정하므로 이 export 에서는
+에피소드를 조용히 빠뜨린다 (§27). 이쪽은 parquet 2 개와 카메라당 5–14 개 mp4 를 전부 읽고,
+자르기 자체는 urlrfm 것을 그대로 쓴다 (입력 `-ss` + `-frames:v`, 스트림 복사 금지 — 소스가
+GOP-2 라 홀수 프레임에서 시작하는 에피소드가 앞 키프레임으로 밀린다).
+
+### `_train` / `_val` 분할 — val 은 고정이다
+
+세션 정보가 없는 export 라 **에피소드 단위** 로 뽑는다 (`split_stage1.py`, seed 20260904,
+127 중 10 개 = 7.9%).
+
+`split_stage1_v2.py` 는 **같은 draw 에 +45 오프셋만 얹는다** — `[71, 118, 128, 131, 132, 142,
+146, 149, 152, 156]`, 곧 v1 이 들고 있던 것과 같은 열 개의 녹화다 (프레임 수도 11,508 로
+동일). 그래서 v2 로 학습한 모델의 스캔이 EXPERIMENTS.md §27–28 표(stride 7, 1,593 윈도우)
+옆에 그대로 놓인다. **val 이 움직이면 그 표는 비교가 아니라 그냥 다른 두 숫자가 된다.**
+늘어나는 것은 train 뿐이다 — 117 → 162 eps, 157,663 → 222,090 프레임 (+41%).
+
+> `meta/relative_stats.json` 은 ABS config 로 생성하면 빈 값(30 바이트)이 나온다 — relative
+> 키가 없으니 계산할 것이 없어서다. 같은 데이터셋으로 REL 런을 돌리려면 그때 REL config 로
+> 다시 만들어야 한다.
+
+> 짧은 에피소드가 섞여 있다. `_v2` 에 130–196 프레임(4–6 초)짜리가 7 개 있는데 전 구간
+> 녹화의 1/10 도 안 된다. H40 윈도우는 나오므로 그대로 학습에 들어가 있다 — 실패 후 중단된
+> 녹화인지는 확인 안 했다.
+
 ---
 
 ## 알아두면 좋은 관계
