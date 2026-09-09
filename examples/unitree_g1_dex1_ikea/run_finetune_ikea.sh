@@ -144,6 +144,20 @@ mkdir -p "$OUTPUT_DIR"
 # launch-time probe cannot predict it. Keeping everything and pruning by hand
 # after the scan is the version that cannot silently lose the checkpoints the
 # comparison needs. Set SAVE_TOTAL_LIMIT to a positive number to rotate anyway.
+# Checkpoints exist to be scanned, and a run whose checkpoints are never scored
+# is a run that did not happen -- eval_loss does not select them (see the note on
+# SAVE_STEPS above). So the scan is part of the launch rather than a second
+# command the operator has to remember, and it runs even when training dies
+# early: whatever checkpoints reached disk still get scored.
+#
+# STRIDE is the one setting that is not free. A scan meant to sit beside recorded
+# numbers has to use the stride those were measured at -- 7 for the stage1/stage2
+# sets, 10 for the older IKEA ones -- so it is printed loudly at launch and the
+# default stays at scan_when_done.sh's own 10.
+AUTO_SCAN="${AUTO_SCAN:-1}"
+SCAN_STRIDE="${SCAN_STRIDE:-10}"
+SCAN_GPUS="${SCAN_GPUS:-0 1}"
+
 SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-0}"
 if [ "$SAVE_TOTAL_LIMIT" -gt 0 ]; then
     echo "WARNING: SAVE_TOTAL_LIMIT=$SAVE_TOTAL_LIMIT -- rotation has deleted the wrong" >&2
@@ -167,6 +181,11 @@ echo "  gpus            : $NUM_GPUS (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES
 echo "  effective batch : $((GLOBAL_BATCH_SIZE * GRAD_ACCUM)) (global $GLOBAL_BATCH_SIZE x accum $GRAD_ACCUM)"
 echo "  steps           : $MAX_STEPS (save every $SAVE_STEPS)"
 echo "  output          : $OUTPUT_DIR"
+if [ "$AUTO_SCAN" = "1" ]; then
+    echo "  scan on finish  : stride $SCAN_STRIDE on GPU $SCAN_GPUS against $VAL_DATASET"
+else
+    echo "  scan on finish  : DISABLED (AUTO_SCAN=0)"
+fi
 
 env \
     OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 \
@@ -189,3 +208,13 @@ env \
     --val-dataset-path "$VAL_DATASET" --eval-steps "${EVAL_STEPS:-2000}" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
     2>&1 | tee "$OUTPUT_DIR/train.log"
+TRAIN_STATUS=${PIPESTATUS[0]}
+
+if [ "$AUTO_SCAN" = "1" ]; then
+    echo "=== training exited ($TRAIN_STATUS); scanning $EXP_NAME at stride $SCAN_STRIDE ==="
+    # scan_when_done.sh waits on the training process first, which has already
+    # exited here, so it falls straight through to the scan.
+    VAL="$VAL_DATASET" STRIDE="$SCAN_STRIDE" \
+        bash "$EXAMPLE_DIR/scan_when_done.sh" "$EXP_NAME" "$CONFIG" $SCAN_GPUS
+fi
+exit "$TRAIN_STATUS"
