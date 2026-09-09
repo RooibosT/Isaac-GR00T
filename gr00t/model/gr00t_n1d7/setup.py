@@ -125,6 +125,19 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 transformers_loading_kwargs=self.transformers_loading_kwargs,
             )
 
+        # Observation history widens the state encoder's first layer, a shape the
+        # checkpoint cannot supply. Loading at the checkpoint's width and
+        # expanding afterwards keeps `from_pretrained` on its strict path, so a
+        # genuine weight mismatch still raises rather than being waved through.
+        target_history = getattr(self.config.model, "state_history_length", 1)
+        if target_history != model.config.state_history_length:
+            logging.info(
+                f"expanding state history {model.config.state_history_length} -> "
+                f"{target_history}; state_encoder.layer1 tiled from the checkpoint"
+            )
+            model.action_head.expand_state_history(target_history)
+            model.config.state_history_length = target_history
+
         logging.debug(f"Model Config: {model.config}")
         with run_or_wait_on_rank0(label="final_model_config.json write") as is_rank0:
             if is_rank0:
@@ -181,6 +194,8 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 state_dropout_prob=self.model_config.state_dropout_prob,
                 state_dropout_keys=getattr(self.model_config, "state_dropout_keys", ()),
                 state_dropout_key_prob=getattr(self.model_config, "state_dropout_key_prob", 0.0),
+                state_history_keys=getattr(self.model_config, "state_history_keys", ()),
+                history_dropout_prob=getattr(self.model_config, "history_dropout_prob", 0.0),
                 use_mean_std=self.model_config.use_mean_std,
                 **self.transformers_loading_kwargs,
             )
@@ -212,6 +227,8 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 state_dropout_prob=self.model_config.state_dropout_prob,
                 state_dropout_keys=getattr(self.model_config, "state_dropout_keys", ()),
                 state_dropout_key_prob=getattr(self.model_config, "state_dropout_key_prob", 0.0),
+                state_history_keys=getattr(self.model_config, "state_history_keys", ()),
+                history_dropout_prob=getattr(self.model_config, "history_dropout_prob", 0.0),
                 use_mean_std=self.model_config.use_mean_std,
                 transformers_loading_kwargs=self.transformers_loading_kwargs,
             )

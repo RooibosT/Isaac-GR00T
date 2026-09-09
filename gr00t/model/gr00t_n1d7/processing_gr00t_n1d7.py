@@ -260,6 +260,8 @@ class Gr00tN1d7Processor(BaseProcessor):
         state_dropout_prob: float = 0.0,
         state_dropout_keys: tuple[str, ...] = (),
         state_dropout_key_prob: float = 0.0,
+        state_history_keys: tuple[str, ...] = (),
+        history_dropout_prob: float = 0.0,
         # Normalization
         use_mean_std: bool = False,
         letter_box_transform: bool = False,
@@ -289,6 +291,8 @@ class Gr00tN1d7Processor(BaseProcessor):
         self.state_dropout_prob = state_dropout_prob
         self.state_dropout_keys = set(state_dropout_keys or ())
         self.state_dropout_key_prob = state_dropout_key_prob
+        self.state_history_keys = set(state_history_keys or ())
+        self.history_dropout_prob = history_dropout_prob
 
         self.letter_box_transform = letter_box_transform
 
@@ -674,20 +678,36 @@ class Gr00tN1d7Processor(BaseProcessor):
         # Per-key dropout draws once per key, so a named block can be made
         # unreliable on its own while the rest of the state stays visible.
         drop_key = self.state_dropout_keys and self.state_dropout_key_prob > 0 and self.training
-        normalized_states = torch.cat(
-            [
-                torch.from_numpy(np.zeros_like(state_data[key]))
-                if drop_all
-                or (
-                    drop_key
-                    and key in self.state_dropout_keys
-                    and random.random() < self.state_dropout_key_prob
-                )
-                else torch.from_numpy(norm_state_dict[key])
-                for key in state_keys
-            ],
-            dim=-1,
+        # Observation history is shaped here rather than in the action head
+        # because the blocks still have names at this point; downstream the state
+        # is one flat vector and the boundaries are gone. Both steps are no-ops
+        # when the state modality has a single delta index.
+        collapse = (
+            self.history_dropout_prob > 0
+            and self.training
+            and random.random() < self.history_dropout_prob
         )
+        blocks = []
+        for key in state_keys:
+            if drop_all or (
+                drop_key
+                and key in self.state_dropout_keys
+                and random.random() < self.state_dropout_key_prob
+            ):
+                blocks.append(torch.from_numpy(np.zeros_like(state_data[key])))
+                continue
+            arr = norm_state_dict[key]
+            if arr.shape[0] > 1:
+                arr = arr.copy()
+                # Collapse first, mask second: a withheld block reads zero at
+                # t<0 either way, so the two orders agree, and the kept blocks
+                # then hold the current frame repeated.
+                if collapse:
+                    arr[:-1] = arr[-1]
+                if self.state_history_keys and key not in self.state_history_keys:
+                    arr[:-1] = 0.0
+            blocks.append(torch.from_numpy(arr))
+        normalized_states = torch.cat(blocks, dim=-1)
         normalized_states = torch.cat(
             [
                 normalized_states,
@@ -905,6 +925,16 @@ class Gr00tN1d7Processor(BaseProcessor):
                 "use_relative_action",
                 "exclude_state",
                 "state_dropout_prob",
+                # The per-key and history settings belong here for the same
+                # reason state_dropout_prob does: they are training-time
+                # regularisation chosen on the launch line, and a checkpoint
+                # that predates them serialises nothing for them. Left off this
+                # list they are dropped in silence -- the run trains with the
+                # defaults while the launch line says otherwise.
+                "state_dropout_keys",
+                "state_dropout_key_prob",
+                "state_history_keys",
+                "history_dropout_prob",
                 "use_mean_std",
                 "model_name",
                 "model_type",

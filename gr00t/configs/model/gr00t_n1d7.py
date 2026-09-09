@@ -79,6 +79,19 @@ class Gr00tN1d7Config(PretrainedConfig):
 
     # State history: number of consecutive state timesteps fed to the state encoder
     state_history_length: int = 1
+    state_history_keys: tuple[str, ...] = ()
+    """State blocks the history timesteps carry. Empty means every block, which is
+    the plain dense history. Naming a subset zeroes the other blocks at t<0 while
+    leaving the current timestep whole -- the point being that arm joint and
+    velocity history is the channel a policy uses to extrapolate its own motion
+    instead of reading the scene, so it can be withheld while contact and pose
+    history are kept."""
+
+    history_dropout_prob: float = 0.0
+    """Probability that the history collapses onto the current timestep, per
+    example. The collapsed form is not a synthetic value: it is what an episode's
+    first steps look like once out-of-range indices are clamped, and what a robot
+    sees before its observation buffer fills."""
 
     # Global parameters
     add_pos_embed: bool = True

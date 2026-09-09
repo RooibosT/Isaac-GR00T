@@ -104,6 +104,16 @@ class FinetuneConfig:
     state_dropout_key_prob: float = 0.0
     """Probability that each key in ``state_dropout_keys`` is zeroed, per example."""
 
+    state_history_keys: tuple[str, ...] = ()
+    """State blocks the history timesteps carry, when the modality config asks for
+    more than one. Empty means all of them. The history length itself is not set
+    here -- it is read off the state modality's ``delta_indices``, so the config
+    file stays the single source of truth and the two cannot disagree."""
+
+    history_dropout_prob: float = 0.0
+    """Probability that the observation history collapses onto the current
+    timestep, per example."""
+
     # --- Data Augmentation ---
     random_rotation_angle: int | None = None
     """Maximum rotation angle (in degrees) for random rotation augmentation of input images."""

@@ -167,6 +167,42 @@ class Gr00tN1d7ActionHead(nn.Module):
                 self.vlln.eval()
                 self.vl_self_attention.eval()
 
+    @torch.no_grad()
+    def expand_state_history(self, new_length: int) -> None:
+        """Widen the state encoder to take `new_length` observation timesteps.
+
+        The state reaches the encoder as one flat vector of
+        `state_history_length * max_state_dim`, so extra timesteps change the
+        first layer's input width and nothing else -- `layer2` and every other
+        module are untouched.
+
+        Each timestep's slot gets the pretrained weights divided by the new
+        length, which makes the expansion an identity at initialisation: for a
+        history that repeats the current frame the slots sum back to exactly the
+        pretrained product. That is not a contrived case -- it is what an
+        episode's opening steps look like once out-of-range indices are clamped,
+        what a robot sees before its observation buffer fills, and what
+        `history_dropout_prob` trains against. So the run starts from the
+        checkpoint's own behaviour rather than from a reinitialised encoder.
+        """
+        old_length = self.config.state_history_length
+        if new_length == old_length:
+            return
+        if old_length != 1:
+            raise ValueError(
+                f"state history expansion is only defined from a single timestep, got {old_length}"
+            )
+        if new_length < 1:
+            raise ValueError(f"state history length must be >= 1, got {new_length}")
+        width = self.config.max_state_dim
+        layer = self.state_encoder.layer1
+        assert layer.W.shape[1] == width, (
+            f"state encoder input is {layer.W.shape[1]}, expected max_state_dim {width}"
+        )
+        tiled = (layer.W.data / new_length).repeat(1, new_length, 1).clone()
+        layer.W = nn.Parameter(tiled)
+        self.config.state_history_length = new_length
+
     def sample_time(self, batch_size, device, dtype):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
         sample = (1 - sample) * self.config.noise_s

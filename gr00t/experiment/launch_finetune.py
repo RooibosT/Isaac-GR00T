@@ -17,6 +17,7 @@
 # This script tries to provide a similar user experience as current OSS.
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -55,6 +56,19 @@ if __name__ == "__main__":
     # all rank workers should register for the modality config
     if ft_config.modality_config_path is not None:
         load_modality_config(ft_config.modality_config_path)
+
+    from gr00t.configs.data.embodiment_configs import MODALITY_CONFIGS
+
+    state_history_length = 1
+    if embodiment_tag in MODALITY_CONFIGS:
+        state_deltas = MODALITY_CONFIGS[embodiment_tag]["state"].delta_indices
+        state_history_length = len(state_deltas)
+        if state_history_length > 1:
+            logging.info(
+                f"state history: {state_history_length} timesteps at {list(state_deltas)}"
+                f", keys {ft_config.state_history_keys or 'all'}"
+                f", dropout {ft_config.history_dropout_prob}"
+            )
 
     dataset_paths = [path for path in ft_config.dataset_path.split(os.pathsep) if path]
 
@@ -98,6 +112,20 @@ if __name__ == "__main__":
     config.model.state_dropout_prob = ft_config.state_dropout_prob
     config.model.state_dropout_keys = ft_config.state_dropout_keys
     config.model.state_dropout_key_prob = ft_config.state_dropout_key_prob
+    config.model.state_history_keys = ft_config.state_history_keys
+    config.model.history_dropout_prob = ft_config.history_dropout_prob
+    # The history length is derived, never passed: the state modality's
+    # delta_indices already say how many timesteps arrive, and the action head
+    # asserts the two agree, so taking it from anywhere else only creates a way
+    # for them to disagree.
+    config.model.state_history_length = state_history_length
+    # Negative delta indices run off the front of an episode, and step 0 is
+    # sampled. Without padding those indices reach pandas `.iloc` as negatives
+    # and silently address the *end* of the episode -- no exception, just the
+    # future served as the past for the opening frames of every episode.
+    if state_history_length > 1:
+        config.data.allow_padding = True
+        logging.info("state history: allow_padding forced on (indices clamp to frame 0)")
     config.model.random_rotation_angle = ft_config.random_rotation_angle
     config.model.color_jitter_params = ft_config.color_jitter_params
     config.model.use_percentiles = ft_config.use_percentiles
