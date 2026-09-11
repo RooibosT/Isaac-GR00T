@@ -260,6 +260,7 @@ class Gr00tN1d7Processor(BaseProcessor):
         state_dropout_prob: float = 0.0,
         state_dropout_keys: tuple[str, ...] = (),
         state_dropout_key_prob: float = 0.0,
+        state_dropout_keep_keys: tuple[str, ...] = (),
         state_history_keys: tuple[str, ...] = (),
         history_dropout_prob: float = 0.0,
         # Normalization
@@ -291,6 +292,7 @@ class Gr00tN1d7Processor(BaseProcessor):
         self.state_dropout_prob = state_dropout_prob
         self.state_dropout_keys = set(state_dropout_keys or ())
         self.state_dropout_key_prob = state_dropout_key_prob
+        self.state_dropout_keep_keys = set(state_dropout_keep_keys or ())
         self.state_history_keys = set(state_history_keys or ())
         self.history_dropout_prob = history_dropout_prob
 
@@ -689,7 +691,10 @@ class Gr00tN1d7Processor(BaseProcessor):
         )
         blocks = []
         for key in state_keys:
-            if drop_all or (
+            # A kept block rides through the whole-state drop: the point of the
+            # drop is to stop the policy leaning on proprioception it will not
+            # always have, and a phase counted outside the robot is not that.
+            if (drop_all and key not in self.state_dropout_keep_keys) or (
                 drop_key
                 and key in self.state_dropout_keys
                 and random.random() < self.state_dropout_key_prob
@@ -933,6 +938,7 @@ class Gr00tN1d7Processor(BaseProcessor):
                 # defaults while the launch line says otherwise.
                 "state_dropout_keys",
                 "state_dropout_key_prob",
+                "state_dropout_keep_keys",
                 "state_history_keys",
                 "history_dropout_prob",
                 "use_mean_std",

@@ -125,6 +125,16 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 transformers_loading_kwargs=self.transformers_loading_kwargs,
             )
 
+        # `state_dropout_keep_keys` is read by the action head off `model.config`,
+        # which `from_pretrained` builds from the checkpoint's own config.json --
+        # so a launch-line value reaches the processor but not the head, and the
+        # head's embedding dropout goes on erasing the very block the processor
+        # was told to keep. Carry it across explicitly.
+        keep = getattr(self.config.model, "state_dropout_keep_keys", ())
+        if keep:
+            model.config.state_dropout_keep_keys = tuple(keep)
+            logging.info(f"state dropout keeps {tuple(keep)}; head-level dropout off")
+
         # Observation history widens the state encoder's first layer, a shape the
         # checkpoint cannot supply. Loading at the checkpoint's width and
         # expanding afterwards keeps `from_pretrained` on its strict path, so a
@@ -194,6 +204,7 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 state_dropout_prob=self.model_config.state_dropout_prob,
                 state_dropout_keys=getattr(self.model_config, "state_dropout_keys", ()),
                 state_dropout_key_prob=getattr(self.model_config, "state_dropout_key_prob", 0.0),
+                state_dropout_keep_keys=getattr(self.model_config, "state_dropout_keep_keys", ()),
                 state_history_keys=getattr(self.model_config, "state_history_keys", ()),
                 history_dropout_prob=getattr(self.model_config, "history_dropout_prob", 0.0),
                 use_mean_std=self.model_config.use_mean_std,
@@ -227,6 +238,7 @@ class Gr00tN1d7Pipeline(ModelPipeline):
                 state_dropout_prob=self.model_config.state_dropout_prob,
                 state_dropout_keys=getattr(self.model_config, "state_dropout_keys", ()),
                 state_dropout_key_prob=getattr(self.model_config, "state_dropout_key_prob", 0.0),
+                state_dropout_keep_keys=getattr(self.model_config, "state_dropout_keep_keys", ()),
                 state_history_keys=getattr(self.model_config, "state_history_keys", ()),
                 history_dropout_prob=getattr(self.model_config, "history_dropout_prob", 0.0),
                 use_mean_std=self.model_config.use_mean_std,

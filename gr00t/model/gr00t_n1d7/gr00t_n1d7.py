@@ -253,7 +253,18 @@ class Gr00tN1d7ActionHead(nn.Module):
         state_features = self.state_encoder(action_input.state, embodiment_id)
 
         # Dropout state features (training only): zero out dropped states.
-        if self.training and self.state_dropout_prob > 0:
+        #
+        # This is the second of two draws on `state_dropout_prob` -- the processor
+        # already zeroed the state *values* on its own draw, leaving the encoder's
+        # bias, while this zeroes the embedding outright. With
+        # `state_dropout_keep_keys` set the processor's draw is the selective one
+        # and this cannot be, so it is skipped rather than erasing the block that
+        # was deliberately kept.
+        if (
+            self.training
+            and self.state_dropout_prob > 0
+            and not getattr(self.config, "state_dropout_keep_keys", ())
+        ):
             do_dropout = (
                 torch.rand(state_features.shape[0], device=state_features.device)
                 < self.state_dropout_prob

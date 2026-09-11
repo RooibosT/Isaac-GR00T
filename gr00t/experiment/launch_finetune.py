@@ -112,6 +112,7 @@ if __name__ == "__main__":
     config.model.state_dropout_prob = ft_config.state_dropout_prob
     config.model.state_dropout_keys = ft_config.state_dropout_keys
     config.model.state_dropout_key_prob = ft_config.state_dropout_key_prob
+    config.model.state_dropout_keep_keys = ft_config.state_dropout_keep_keys
     config.model.state_history_keys = ft_config.state_history_keys
     config.model.history_dropout_prob = ft_config.history_dropout_prob
     # The history length is derived, never passed: the state modality's

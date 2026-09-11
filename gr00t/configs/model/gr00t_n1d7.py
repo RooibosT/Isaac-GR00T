@@ -79,6 +79,20 @@ class Gr00tN1d7Config(PretrainedConfig):
 
     # State history: number of consecutive state timesteps fed to the state encoder
     state_history_length: int = 1
+    state_dropout_keep_keys: tuple[str, ...] = ()
+    """State blocks that survive `state_dropout_prob`. For a signal the observation
+    cannot otherwise supply -- a subtask phase counted by an external module, say --
+    dropping it teaches the model to hedge on the one input that disambiguates two
+    behaviours. Naming it here zeroes every *other* block instead, so the dropped
+    condition becomes "no state except this" rather than "no state".
+
+    Setting this also disables the action head's second, embedding-level dropout,
+    which cannot be selective: it multiplies the whole state embedding by zero. The
+    two are independent draws on the same probability, so a run with this set hides
+    the state on 1-p of samples where a run without it hides it on 1-(1-p)^2 -- 20%
+    against 36% at the default. Runs using this are therefore not drop-for-drop
+    comparable with runs that do not."""
+
     state_history_keys: tuple[str, ...] = ()
     """State blocks the history timesteps carry. Empty means every block, which is
     the plain dense history. Naming a subset zeroes the other blocks at t<0 while

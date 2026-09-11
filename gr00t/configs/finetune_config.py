@@ -104,6 +104,11 @@ class FinetuneConfig:
     state_dropout_key_prob: float = 0.0
     """Probability that each key in ``state_dropout_keys`` is zeroed, per example."""
 
+    state_dropout_keep_keys: tuple[str, ...] = ()
+    """State modality keys that survive ``state_dropout_prob``. See the model
+    config field of the same name -- setting it also turns off the action head's
+    embedding-level dropout, which cannot exempt one block."""
+
     state_history_keys: tuple[str, ...] = ()
     """State blocks the history timesteps carry, when the modality config asks for
     more than one. Empty means all of them. The history length itself is not set
