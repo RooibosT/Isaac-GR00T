@@ -11,6 +11,17 @@ B=g1_dex1_ikea_relarm_3view_aug_b64_stage1v2_absarm_armvel
 LOG=$ROOT/datasets/chain_stage1v2_upload_armvel.log
 say() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
+# upload_best_ckpt.py takes the dataset facts as arguments rather than baking
+# them into its card, so every caller has to supply them or argparse rejects the
+# run. All the stage1_v2 runs share one set; the note lives in a file because
+# four scripts repeating a paragraph is four places for it to drift.
+V2_DATA=(--dataset-repo RooibosT/IKEA-pick-leg-stage1_v2
+         --train-eps 162 --train-frames 222090
+         --val-eps 10 --val-frames 11508
+         --max-steps 45000
+         --data-note "$(cat /root/02_hub/datasets/stage1v2_data_note.txt)")
+
+
 say "waiting for chain_stage1v2_followup.sh (armvel training + scan) to exit"
 while pgrep -f "chain_stage1v2_followup[.]sh" > /dev/null 2>&1; do sleep 60; done
 say "it exited"
@@ -26,7 +37,7 @@ say "uploading best checkpoint of $B"
 # The dataset facts moved from constants inside upload_best_ckpt.py to arguments
 # here, so that pointing it at a different export cannot silently emit a card
 # describing this one. These are stage1_v2's.
-python "$HUB/upload_best_ckpt.py" \
+python "$HUB/upload_best_ckpt.py" "${V2_DATA[@]}" \
     --exp "$B" \
     --repo RooibosT/gr00t-n1.7-g1-dex1-ikea-stage1v2-absarm-armvel-30hz-h40 \
     --config g1_dex1_ikea_absarm_armvel_config.py \

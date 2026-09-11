@@ -19,6 +19,17 @@ A=g1_dex1_ikea_relarm_3view_aug_b64_stage1v2_absarm
 LOG=$ROOT/datasets/chain_stage1v2_followup.log
 say() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
+# upload_best_ckpt.py takes the dataset facts as arguments rather than baking
+# them into its card, so every caller has to supply them or argparse rejects the
+# run. All the stage1_v2 runs share one set; the note lives in a file because
+# four scripts repeating a paragraph is four places for it to drift.
+V2_DATA=(--dataset-repo RooibosT/IKEA-pick-leg-stage1_v2
+         --train-eps 162 --train-frames 222090
+         --val-eps 10 --val-frames 11508
+         --max-steps 45000
+         --data-note "$(cat /root/02_hub/datasets/stage1v2_data_note.txt)")
+
+
 # The bracket keeps this pattern from matching the pgrep process's own argv.
 say "waiting for chain_stage1v2_absarm.sh (training + scan) to exit"
 while pgrep -f "chain_stage1v2_absarm[.]sh" > /dev/null 2>&1; do sleep 60; done
@@ -29,7 +40,7 @@ source "$ROOT/.venv/bin/activate"
 SCAN=$ROOT/outputs/$A/$A/scan.json
 if [ -f "$SCAN" ]; then
     say "uploading best checkpoint of $A"
-    python "$HUB/upload_best_ckpt.py" \
+    python "$HUB/upload_best_ckpt.py" "${V2_DATA[@]}" \
         --exp "$A" \
         --repo RooibosT/gr00t-n1.7-g1-dex1-ikea-stage1v2-absarm-30hz-h40 \
         --config g1_dex1_ikea_absarm_3view_aug_config.py \
