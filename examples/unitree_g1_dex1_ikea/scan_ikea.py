@@ -81,8 +81,20 @@ XR_REPO = str(URL_LEROBOT / "xr_teleoperate")
 FIRST_KS = (5, 8, 16)
 
 
-def build_windows(loader, embodiment_tag, horizon, stride, tasks, relabel=None):
-    """(episode, task, parsed_obs, gt[horizon, D]) every `stride` frames."""
+def build_windows(loader, embodiment_tag, horizon, stride, relabel=None):
+    """(episode, task, parsed_obs, gt[horizon, D]) every `stride` frames.
+
+    The grouping label is the instruction at the window's own start frame, not
+    the episode's. A subtask export carries more than one -- in
+    `IKEA_pick_leg_stage1_v2_subtask`, "stage1: align the table base" is the last
+    ~10% of 139 of 158 train episodes -- and `meta/episodes.jsonl` lists both
+    strings per episode, so taking `[0]` filed every window under the first one
+    and hid the second phase inside the first one's numbers. `dp.text` resolves
+    per frame from `task_index`, so it separates them; on a single-instruction
+    split it *is* the episode label and nothing moves. It is also the
+    pre-relabel string, which is what `--relabel` promises: the val label
+    groups, the rewritten one is fed to the policy.
+    """
     relabel = relabel or {}
     obs_configs = deepcopy(loader.modality_configs)
     obs_configs.pop("action")
@@ -107,7 +119,7 @@ def build_windows(loader, embodiment_tag, horizon, stride, tasks, relabel=None):
             windows.append(
                 (
                     ep,
-                    tasks[ep],
+                    dp.text,
                     parse_observation_gr00t(obs, loader.modality_configs),
                     gt_all[t : t + horizon],
                 )
@@ -261,14 +273,11 @@ def main():
     horizon = len(modality["action"].delta_indices)
     action_keys = modality["action"].modality_keys
 
-    tasks = [
-        json.loads(line)["tasks"][0] for line in open(args.dataset_path / "meta/episodes.jsonl")
-    ]
     relabel = dict(pair.split("=", 1) for pair in args.relabel)
     if relabel:
         logging.info("relabelling instructions: %s", relabel)
     loader = LeRobotEpisodeLoader(dataset_path=str(args.dataset_path), modality_configs=modality)
-    windows = build_windows(loader, tag, horizon, args.stride, tasks, relabel)
+    windows = build_windows(loader, tag, horizon, args.stride, relabel)
     logging.info("windows: %d (stride %d)", len(windows), args.stride)
 
     kin = G1WristKinematics(XR_REPO, waist_zero=True)
