@@ -79,6 +79,13 @@ class ActionConfig:
     type: ActionType
     format: ActionFormat
     state_key: str | None = None
+    # Relative weight this block carries in the action loss. The loss is a mean
+    # over the valid entries of `action_mask`, so a weight below 1 makes a block
+    # auxiliary: it is still predicted, and still supervised, but a block nine
+    # columns wide no longer sets a third of the gradient next to the sixteen
+    # columns the robot actually executes. 1.0 leaves every existing config
+    # exactly as it was.
+    loss_weight: float = 1.0
 
 
 @dataclass

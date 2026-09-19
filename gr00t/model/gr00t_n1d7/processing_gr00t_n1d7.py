@@ -625,10 +625,9 @@ class Gr00tN1d7Processor(BaseProcessor):
         if normalized_actions:
             # Concatenate actions
             action_keys = self.modality_configs[embodiment_tag.value]["action"].modality_keys
-            normalized_actions = torch.cat(
-                [torch.from_numpy(normalized_actions[key]) for key in action_keys],
-                dim=-1,
-            )  # (t, d)
+            per_key = [torch.from_numpy(normalized_actions[key]) for key in action_keys]
+            key_widths = [block.shape[-1] for block in per_key]
+            normalized_actions = torch.cat(per_key, dim=-1)  # (t, d)
             action_dim = normalized_actions.shape[1]
             # Pad action to max_action_dim
             normalized_actions = torch.cat(
@@ -662,6 +661,18 @@ class Gr00tN1d7Processor(BaseProcessor):
             action_mask = torch.ones_like(normalized_actions)
             action_mask[action_horizon:] = 0
             action_mask[:, action_dim:] = 0
+            # Per-block loss weights, for blocks that are supervision rather than
+            # something the robot runs. The mask is both the weight and the
+            # denominator in the action loss, so scaling a block's columns here
+            # is a weighted mean and nothing else changes.
+            action_configs = self.modality_configs[embodiment_tag.value]["action"].action_configs
+            if action_configs is not None:
+                start = 0
+                for width, cfg in zip(key_widths, action_configs):
+                    weight = float(getattr(cfg, "loss_weight", 1.0))
+                    if weight != 1.0:
+                        action_mask[:, start : start + width] *= weight
+                    start += width
         else:
             assert not self.training, "Action is required in training mode"
             normalized_actions = None
