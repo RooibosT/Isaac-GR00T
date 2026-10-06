@@ -150,6 +150,8 @@ def eval_checkpoint(policy, windows, action_keys, horizon, kin):
             idx = {
                 "arm": [d for k in action_keys if k.endswith("_arm") for d in dims[k]],
                 "grip": [d for k in action_keys if "gripper" in k for d in dims[k]],
+                # waist command (nature_pouch_new on); otherwise it shows up only in mse
+                "waist": [d for k in action_keys if k.startswith("waist") for d in dims[k]],
                 # xyz+rot6d wrist blocks; only the first three of each are position
                 "eef_xyz": [dims[k][:3] for k in action_keys if k.endswith("_eef_9d")],
             }
@@ -187,6 +189,10 @@ def eval_checkpoint(policy, windows, action_keys, horizon, kin):
         }
         if joint_arm:
             rec["mae_arm"] = float(arm_h.mean())
+        if idx["waist"]:
+            waist_h = np.abs(err[:, idx["waist"]]).mean(axis=1)
+            rec["mae_waist"] = float(waist_h.mean())
+            rec["mae_waist_first8"] = float(waist_h[:8].mean())
         for k in FIRST_KS:
             if joint_arm:
                 rec[f"mae_arm_first{k}"] = float(arm_h[:k].mean())
@@ -307,6 +313,8 @@ def main():
         torch.cuda.empty_cache()
         a = results[ck.name]["__all__"]
         arm = f"arm {np.degrees(a['mae_arm']):.3f} deg  " if "mae_arm" in a else ""
+        if "mae_waist" in a:
+            arm += f"waist {np.degrees(a['mae_waist']):.3f} deg  "
         logging.info(
             "%s  mse %.5f  %see %.2f mm  grip %.4f  (%.1f min)",
             ck.name,
